@@ -1,0 +1,40 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Cngsm Code Specifics
+workspace/
+!workspace/.gitkeep
+
+# Environment and Secrets
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+.flaskenv
+
+# Log files and reports
+*.log
+output.txt
+output_*.txt
+result.json
+status.txt
+
+# Scratch and diagnostic scripts
+test_*.py
+diagnostic_*.py
+
+# OS-specific files
+.DS_Store
+Thumbs.db
+
+# IDE specific files
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Project documentation that shouldn't be in root (optional)
+fix_encoding_utf8.md
