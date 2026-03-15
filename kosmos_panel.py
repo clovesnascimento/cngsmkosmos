@@ -1,13 +1,12 @@
 """
-KOSMOS Agent — Painel de Controle Premium v2.1
+KOSMOS Agent — Painel de Controle Premium v2.5
 ===============================================
-Interface com streaming de pensamentos em tempo real.
-Melhorias:
-  - Streaming do loop cognitivo (pensamentos visíveis)
-  - Status de segurança em tempo real
-  - Dark Mode premium
-  - Histórico de sessão exportável
-  - Indicador de modo de execução (KVM / Docker / Bloqueado)
+Melhorias v2.5:
+  - Input responsivo (Enter envia, Shift+Enter nova linha)
+  - 3 temas: Dark Premium, Clear Apple, Dourado Galáxia
+  - Detecção de hardware na inicialização (CPU, RAM, modo recomendado)
+  - Boot Panel com presets detalhados
+  - Identidade CNGSM KOSMOS
 """
 
 import tkinter as tk
@@ -18,6 +17,8 @@ import time
 import threading
 import sys
 import queue
+import platform
+import subprocess
 from typing import Dict, Any, Optional
 from datetime import datetime
 
@@ -28,28 +29,84 @@ except ImportError:
     from main import KosmosEngine, BANNER
 
 
-# ─── Paleta Dark Premium ───
-COLORS = {
-    "bg_primary":   "#0d0f14",
-    "bg_secondary": "#141720",
-    "bg_card":      "#1a1e2a",
-    "bg_input":     "#1f2335",
-    "accent":       "#7c6af7",       # Roxo KOSMOS
-    "accent_green": "#2dd4a0",
-    "accent_red":   "#f76a6a",
-    "accent_yellow":"#f7c76a",
-    "text_primary": "#e8eaf0",
-    "text_secondary":"#7b8099",
-    "text_muted":   "#454d66",
-    "border":       "#252a3d",
-    "user_bubble":  "#1e2540",
-    "bot_bubble":   "#171c2e",
-    "system_text":  "#454d66",
-    "success":      "#2dd4a0",
-    "error":        "#f76a6a",
-    "warning":      "#f7c76a",
-    "thinking":     "#7c6af7",
+# ══════════════════════════════════════════════════════════════════
+# TEMAS
+# ══════════════════════════════════════════════════════════════════
+
+THEMES = {
+    "🌑 Dark Premium": {
+        "bg_primary":    "#0d0f14",
+        "bg_secondary":  "#141720",
+        "bg_card":       "#1a1e2a",
+        "bg_input":      "#1f2335",
+        "accent":        "#7c6af7",
+        "accent_green":  "#2dd4a0",
+        "accent_red":    "#f76a6a",
+        "accent_yellow": "#f7c76a",
+        "text_primary":  "#e8eaf0",
+        "text_secondary":"#7b8099",
+        "text_muted":    "#454d66",
+        "border":        "#252a3d",
+        "user_bubble":   "#1e2540",
+        "bot_bubble":    "#171c2e",
+        "system_text":   "#454d66",
+        "success":       "#2dd4a0",
+        "error":         "#f76a6a",
+        "warning":       "#f7c76a",
+        "thinking":      "#7c6af7",
+        "send_btn":      "#7c6af7",
+        "send_fg":       "#ffffff",
+    },
+    "☀️ Clear Apple": {
+        "bg_primary":    "#f5f5f7",
+        "bg_secondary":  "#ffffff",
+        "bg_card":       "#fafafa",
+        "bg_input":      "#ffffff",
+        "accent":        "#0071e3",
+        "accent_green":  "#28a745",
+        "accent_red":    "#dc3545",
+        "accent_yellow": "#fd7e14",
+        "text_primary":  "#1d1d1f",
+        "text_secondary":"#6e6e73",
+        "text_muted":    "#aeaeb2",
+        "border":        "#d2d2d7",
+        "user_bubble":   "#e8f0fe",
+        "bot_bubble":    "#f0f0f5",
+        "system_text":   "#aeaeb2",
+        "success":       "#28a745",
+        "error":         "#dc3545",
+        "warning":       "#fd7e14",
+        "thinking":      "#0071e3",
+        "send_btn":      "#0071e3",
+        "send_fg":       "#ffffff",
+    },
+    "✨ Dourado Galáxia": {
+        "bg_primary":    "#0a0806",
+        "bg_secondary":  "#120e09",
+        "bg_card":       "#1a1510",
+        "bg_input":      "#211a12",
+        "accent":        "#d4a017",
+        "accent_green":  "#c8b560",
+        "accent_red":    "#e05c3a",
+        "accent_yellow": "#f0c040",
+        "text_primary":  "#f5e6c8",
+        "text_secondary":"#a08050",
+        "text_muted":    "#5a4020",
+        "border":        "#2e2010",
+        "user_bubble":   "#1e1608",
+        "bot_bubble":    "#160e04",
+        "system_text":   "#5a4020",
+        "success":       "#c8b560",
+        "error":         "#e05c3a",
+        "warning":       "#f0c040",
+        "thinking":      "#d4a017",
+        "send_btn":      "#d4a017",
+        "send_fg":       "#0a0806",
+    },
 }
+
+ACTIVE_THEME = "🌑 Dark Premium"
+COLORS = THEMES[ACTIVE_THEME]
 
 FONT_MONO  = ("Consolas", 10)
 FONT_BODY  = ("Segoe UI", 11)
@@ -58,32 +115,296 @@ FONT_BOLD  = ("Segoe UI Semibold", 11)
 FONT_TITLE = ("Segoe UI Semibold", 13)
 
 
-class StreamingHandler:
+# ══════════════════════════════════════════════════════════════════
+# HARDWARE DETECTION
+# ══════════════════════════════════════════════════════════════════
+
+def detect_hardware() -> dict:
+    """Detecta specs do PC e retorna recomendação de modo."""
+    info = {
+        "cpu": "Desconhecido",
+        "ram_gb": 4,
+        "cores": 2,
+        "platform": platform.system(),
+        "python": platform.python_version(),
+        "kvm": os.path.exists("/dev/kvm"),
+        "docker": False,
+        "recommended_mode": "💰 Econômico",
+        "recommended_branches": 1,
+        "recommended_iterations": 2,
+        "alert": "",
+    }
+
+    # CPU
+    try:
+        if platform.system() == "Windows":
+            import winreg
+            key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE,
+                r"HARDWARE\DESCRIPTION\System\CentralProcessor\0")
+            info["cpu"] = winreg.QueryValueEx(key, "ProcessorNameString")[0].strip()
+        else:
+            with open("/proc/cpuinfo") as f:
+                for line in f:
+                    if "model name" in line:
+                        info["cpu"] = line.split(":")[1].strip()
+                        break
+    except Exception:
+        pass
+
+    # RAM
+    try:
+        import psutil
+        info["ram_gb"] = round(psutil.virtual_memory().total / (1024**3), 1)
+        info["cores"]  = psutil.cpu_count(logical=False) or 2
+    except ImportError:
+        try:
+            if platform.system() == "Windows":
+                out = subprocess.check_output(
+                    ["wmic", "computersystem", "get", "TotalPhysicalMemory"],
+                    capture_output=False, text=True
+                )
+                lines = [l.strip() for l in out.strip().split('\n') if l.strip().isdigit()]
+                if lines:
+                    info["ram_gb"] = round(int(lines[0]) / (1024**3), 1)
+        except Exception:
+            pass
+
+    # Docker
+    try:
+        r = subprocess.run(["docker", "info"], capture_output=True, timeout=5)
+        info["docker"] = r.returncode == 0
+    except Exception:
+        pass
+
+    # Recomendação baseada em RAM e cores
+    ram = info["ram_gb"]
+    cores = info["cores"]
+
+    if ram >= 16 and cores >= 6:
+        info["recommended_mode"] = "🚀 Turbo"
+        info["recommended_branches"] = 4
+        info["recommended_iterations"] = 6
+        info["alert"] = "Hardware excelente — Turbo recomendado"
+    elif ram >= 8 and cores >= 4:
+        info["recommended_mode"] = "🔬 Cientista"
+        info["recommended_branches"] = 2
+        info["recommended_iterations"] = 4
+        info["alert"] = "Hardware bom — Cientista recomendado"
+    elif ram >= 6:
+        info["recommended_mode"] = "⚡ Auto-Dev"
+        info["recommended_branches"] = 1
+        info["recommended_iterations"] = 5
+        info["alert"] = "Hardware médio — Auto-Dev recomendado"
+    else:
+        info["recommended_mode"] = "💰 Econômico"
+        info["recommended_branches"] = 1
+        info["recommended_iterations"] = 2
+        info["alert"] = f"RAM limitada ({ram}GB) — Econômico recomendado para estabilidade"
+
+    return info
+
+
+# ══════════════════════════════════════════════════════════════════
+# BOOT PANEL
+# ══════════════════════════════════════════════════════════════════
+
+class BootPanel:
     """
-    Intercepta logs do KosmosEngine e envia para a UI via queue.
-    Permite streaming dos pensamentos em tempo real.
+    Painel de inicialização — detecta hardware e permite configurar
+    parâmetros antes de abrir o chat principal.
     """
-    def __init__(self, message_queue: queue.Queue):
-        self.queue = message_queue
 
-    def emit(self, level: str, message: str):
-        self.queue.put({"type": "log", "level": level, "message": message})
+    BOOT_MODES = {
+        "⚡ Auto-Dev": {
+            "description": "Desenvolvimento autônomo e correção de código. Ideal para tarefas técnicas do dia a dia.",
+            "branches": 1, "max_iterations": 5,
+            "tot": False, "reflexion": True, "economy": False,
+        },
+        "🔬 Cientista": {
+            "description": "O agente age como pesquisador: Hipótese → Experimento → Análise → Relatório.",
+            "branches": 2, "max_iterations": 4,
+            "tot": True, "reflexion": True, "economy": False,
+        },
+        "🚀 Turbo": {
+            "description": "Máxima capacidade de raciocínio. Múltiplos caminhos paralelos. Requer hardware bom.",
+            "branches": 4, "max_iterations": 6,
+            "tot": True, "reflexion": True, "economy": False,
+        },
+        "💰 Econômico": {
+            "description": "Minimiza custo de API e uso de RAM. Raciocínio linear. Ideal para PCs mais modestos.",
+            "branches": 1, "max_iterations": 2,
+            "tot": False, "reflexion": False, "economy": True,
+        },
+    }
 
-    def emit_thought(self, thought: str):
-        self.queue.put({"type": "thought", "message": thought})
+    def __init__(self, root: tk.Tk):
+        self.root = root
+        self.result = None
+        self.hw = {}
 
-    def emit_result(self, result: dict):
-        self.queue.put({"type": "result", "result": result})
+        self.root.title("KOSMOS KOSMOS v2.5 — Inicialização")
+        self.root.geometry("680x620")
+        self.root.resizable(False, False)
+        self.root.configure(bg=COLORS["bg_primary"])
 
-    def emit_error(self, error: str):
-        self.queue.put({"type": "error", "message": error})
+        self._build_ui()
+        threading.Thread(target=self._load_hardware, daemon=True).start()
 
+    def _build_ui(self):
+        C = COLORS
+
+        # Header
+        hdr = tk.Frame(self.root, bg=C["bg_secondary"], height=60)
+        hdr.pack(fill="x")
+        hdr.pack_propagate(False)
+        tk.Label(hdr, text="◈ KOSMOS KOSMOS", font=("Consolas", 16, "bold"),
+                 bg=C["bg_secondary"], fg=C["accent"]).pack(side="left", padx=20, pady=12)
+        tk.Label(hdr, text="v2.5  |  CNGSM — Cloves Nascimento",
+                 font=FONT_SMALL, bg=C["bg_secondary"], fg=C["text_muted"]).pack(side="left")
+
+        body = tk.Frame(self.root, bg=C["bg_primary"])
+        body.pack(fill="both", expand=True, padx=24, pady=16)
+
+        # Hardware info
+        hw_frame = tk.LabelFrame(body, text=" Configuração do Sistema Detectada ",
+                                  bg=C["bg_secondary"], fg=C["text_muted"],
+                                  font=FONT_SMALL, bd=1, relief="flat")
+        hw_frame.pack(fill="x", pady=(0, 12))
+
+        self.hw_cpu_lbl    = tk.Label(hw_frame, text="CPU: detectando...", font=FONT_SMALL,
+                                      bg=C["bg_secondary"], fg=C["text_secondary"], anchor="w")
+        self.hw_cpu_lbl.pack(fill="x", padx=12, pady=(8, 2))
+        self.hw_ram_lbl    = tk.Label(hw_frame, text="RAM: detectando...", font=FONT_SMALL,
+                                      bg=C["bg_secondary"], fg=C["text_secondary"], anchor="w")
+        self.hw_ram_lbl.pack(fill="x", padx=12, pady=2)
+        self.hw_alert_lbl  = tk.Label(hw_frame, text="Analisando...", font=FONT_SMALL,
+                                       bg=C["bg_secondary"], fg=C["accent_yellow"], anchor="w")
+        self.hw_alert_lbl.pack(fill="x", padx=12, pady=(2, 8))
+
+        # Modo
+        mode_frame = tk.LabelFrame(body, text=" Modo de Operação ",
+                                    bg=C["bg_secondary"], fg=C["text_muted"],
+                                    font=FONT_SMALL, bd=1, relief="flat")
+        mode_frame.pack(fill="x", pady=(0, 12))
+
+        self.mode_var = tk.StringVar(value="⚡ Auto-Dev")
+        btn_row = tk.Frame(mode_frame, bg=C["bg_secondary"])
+        btn_row.pack(fill="x", padx=12, pady=8)
+
+        for m in self.BOOT_MODES:
+            rb = tk.Radiobutton(btn_row, text=m, variable=self.mode_var,
+                                value=m, command=self._on_mode,
+                                bg=C["bg_secondary"], fg=C["text_primary"],
+                                selectcolor=C["bg_card"], activebackground=C["bg_secondary"],
+                                font=FONT_BODY)
+            rb.pack(side="left", padx=8)
+
+        self.mode_desc = tk.Label(mode_frame, text=self.BOOT_MODES["⚡ Auto-Dev"]["description"],
+                                   font=FONT_SMALL, bg=C["bg_secondary"], fg=C["text_secondary"],
+                                   wraplength=600, anchor="w", justify="left")
+        self.mode_desc.pack(fill="x", padx=12, pady=(0, 8))
+
+        # Configurações avançadas
+        adv_frame = tk.LabelFrame(body, text=" Configurações Avançadas (opcional) ",
+                                   bg=C["bg_secondary"], fg=C["text_muted"],
+                                   font=FONT_SMALL, bd=1, relief="flat")
+        adv_frame.pack(fill="x", pady=(0, 12))
+
+        adv_grid = tk.Frame(adv_frame, bg=C["bg_secondary"])
+        adv_grid.pack(fill="x", padx=12, pady=8)
+
+        self.adv_vars = {
+            "branches":       tk.StringVar(value="1"),
+            "max_iterations": tk.StringVar(value="5"),
+        }
+
+        labels = [("Branches (ToT):", "branches"), ("Max Iterações:", "max_iterations")]
+        for i, (lbl, key) in enumerate(labels):
+            tk.Label(adv_grid, text=lbl, font=FONT_SMALL,
+                     bg=C["bg_secondary"], fg=C["text_secondary"]).grid(
+                row=0, column=i*2, sticky="e", padx=(0, 6))
+            e = tk.Entry(adv_grid, textvariable=self.adv_vars[key], width=6,
+                         font=FONT_MONO, bg=C["bg_input"],
+                         fg=C["text_primary"], insertbackground=C["accent"], bd=0,
+                         highlightthickness=1, highlightcolor=C["accent"],
+                         highlightbackground=C["border"])
+            e.grid(row=0, column=i*2+1, sticky="w", padx=(0, 24))
+
+        # Tema
+        theme_frame = tk.LabelFrame(body, text=" Tema Visual ",
+                                     bg=C["bg_secondary"], fg=C["text_muted"],
+                                     font=FONT_SMALL, bd=1, relief="flat")
+        theme_frame.pack(fill="x", pady=(0, 12))
+
+        self.theme_var = tk.StringVar(value="🌑 Dark Premium")
+        th_row = tk.Frame(theme_frame, bg=C["bg_secondary"])
+        th_row.pack(fill="x", padx=12, pady=8)
+        for t in THEMES:
+            rb = tk.Radiobutton(th_row, text=t, variable=self.theme_var, value=t,
+                                bg=C["bg_secondary"], fg=C["text_primary"],
+                                selectcolor=C["bg_card"], activebackground=C["bg_secondary"],
+                                font=FONT_BODY)
+            rb.pack(side="left", padx=8)
+
+        # Botão iniciar
+        self.start_btn = tk.Button(
+            body, text="▶  INICIAR KOSMOS",
+            font=("Segoe UI Semibold", 12),
+            bg=C["accent"], fg=C["send_fg"],
+            activebackground=C["thinking"],
+            relief="flat", bd=0, cursor="hand2",
+            command=self._start
+        )
+        self.start_btn.pack(fill="x", ipady=12, pady=(8, 0))
+
+    def _on_mode(self):
+        m = self.mode_var.get()
+        cfg = self.BOOT_MODES.get(m, {})
+        self.mode_desc.configure(text=cfg.get("description", ""))
+        self.adv_vars["branches"].set(str(cfg.get("branches", 1)))
+        self.adv_vars["max_iterations"].set(str(cfg.get("max_iterations", 5)))
+
+    def _load_hardware(self):
+        self.hw = detect_hardware()
+        self.root.after(0, self._update_hw_ui)
+
+    def _update_hw_ui(self):
+        hw = self.hw
+        self.hw_cpu_lbl.configure(text=f"CPU: {hw['cpu']}  |  {hw['cores']} núcleos")
+        self.hw_ram_lbl.configure(
+            text=f"RAM: {hw['ram_gb']} GB  |  Python {hw['python']}  |  "
+                 f"{'KVM ✓' if hw['kvm'] else 'Docker ✓' if hw['docker'] else '⚠ sem sandbox'}"
+        )
+        self.hw_alert_lbl.configure(text=f"⚡ Recomendado: {hw['alert']}")
+        # Aplica modo recomendado
+        self.mode_var.set(hw["recommended_mode"])
+        self.adv_vars["branches"].set(str(hw["recommended_branches"]))
+        self.adv_vars["max_iterations"].set(str(hw["recommended_iterations"]))
+        self._on_mode()
+
+    def _start(self):
+        global ACTIVE_THEME, COLORS
+        ACTIVE_THEME = self.theme_var.get()
+        COLORS = THEMES[ACTIVE_THEME]
+
+        self.result = {
+            "mode": self.mode_var.get(),
+            "theme": self.theme_var.get(),
+            "advanced": {
+                "branches":       int(self.adv_vars["branches"].get() or 1),
+                "max_iterations": int(self.adv_vars["max_iterations"].get() or 5),
+            },
+            "hw": self.hw,
+        }
+        self.root.destroy()
+
+
+# ══════════════════════════════════════════════════════════════════
+# PAINEL PRINCIPAL
+# ══════════════════════════════════════════════════════════════════
 
 class KosmosPanel:
-    """
-    Painel Premium do KOSMOS Agent v2.1
-    Dark theme com streaming de pensamentos em tempo real.
-    """
+    """Painel de Chat Premium do KOSMOS v2.5."""
 
     MODES = {
         "⚡ Auto-Dev": {
@@ -108,9 +429,10 @@ class KosmosPanel:
         },
     }
 
-    def __init__(self, root: tk.Tk):
+    def __init__(self, root: tk.Tk, boot_config: dict = None):
         self.root = root
-        self.root.title("KOSMOS Agent v2.1 — CNGSM CODE")
+        self.boot_config = boot_config or {}
+        self.root.title("KOSMOS KOSMOS v2.5 — CNGSM")
         self.root.geometry("1100x720")
         self.root.minsize(900, 600)
         self.root.configure(bg=COLORS["bg_primary"])
@@ -126,381 +448,267 @@ class KosmosPanel:
         self._start_queue_consumer()
         self._check_environment()
 
+        # Aplica config do boot panel
+        if boot_config:
+            mode = boot_config.get("mode", "⚡ Auto-Dev")
+            if mode in self.MODES:
+                self.mode_var.set(mode)
+                self._on_mode_change()
+            adv = boot_config.get("advanced", {})
+            if adv.get("branches"):
+                self.adv_vars["branches"].set(str(adv["branches"]))
+            if adv.get("max_iterations"):
+                self.adv_vars["max_iterations"].set(str(adv["max_iterations"]))
+
     def _setup_styles(self):
+        C = COLORS
         style = ttk.Style()
-        style.theme_use('clam')
-
-        # Frames
-        style.configure("Dark.TFrame", background=COLORS["bg_primary"])
-        style.configure("Card.TFrame", background=COLORS["bg_card"])
-        style.configure("Sidebar.TFrame", background=COLORS["bg_secondary"])
-
-        # Labels
-        style.configure("Dark.TLabel",
-            background=COLORS["bg_primary"],
-            foreground=COLORS["text_primary"],
-            font=FONT_BODY
-        )
-        style.configure("Card.TLabel",
-            background=COLORS["bg_card"],
-            foreground=COLORS["text_primary"],
-            font=FONT_BODY
-        )
-        style.configure("Sidebar.TLabel",
-            background=COLORS["bg_secondary"],
-            foreground=COLORS["text_secondary"],
-            font=FONT_SMALL
-        )
-        style.configure("Title.TLabel",
-            background=COLORS["bg_secondary"],
-            foreground=COLORS["text_primary"],
-            font=FONT_TITLE
-        )
-
-        # Combobox
+        style.theme_use("clam")
+        style.configure("Dark.TFrame",   background=C["bg_primary"])
+        style.configure("Card.TFrame",   background=C["bg_card"])
+        style.configure("Sidebar.TFrame",background=C["bg_secondary"])
+        style.configure("Dark.TLabel",   background=C["bg_primary"],   foreground=C["text_primary"],   font=FONT_BODY)
+        style.configure("Card.TLabel",   background=C["bg_card"],      foreground=C["text_primary"],   font=FONT_BODY)
+        style.configure("Sidebar.TLabel",background=C["bg_secondary"], foreground=C["text_secondary"], font=FONT_SMALL)
+        style.configure("Title.TLabel",  background=C["bg_secondary"], foreground=C["text_primary"],   font=FONT_TITLE)
         style.configure("Dark.TCombobox",
-            fieldbackground=COLORS["bg_input"],
-            background=COLORS["bg_input"],
-            foreground=COLORS["text_primary"],
-            selectbackground=COLORS["accent"],
-        )
-
-        # Separator
-        style.configure("Dark.TSeparator", background=COLORS["border"])
-
-        # LabelFrame
-        style.configure("Dark.TLabelframe",
-            background=COLORS["bg_secondary"],
-            foreground=COLORS["text_secondary"],
-        )
-        style.configure("Dark.TLabelframe.Label",
-            background=COLORS["bg_secondary"],
-            foreground=COLORS["text_muted"],
-            font=FONT_SMALL
-        )
+            fieldbackground=C["bg_input"], background=C["bg_input"],
+            foreground=C["text_primary"],  selectbackground=C["accent"])
+        style.configure("Dark.TSeparator",  background=C["border"])
+        style.configure("Dark.TLabelframe", background=C["bg_secondary"], foreground=C["text_secondary"])
+        style.configure("Dark.TLabelframe.Label", background=C["bg_secondary"], foreground=C["text_muted"], font=FONT_SMALL)
 
     def _setup_ui(self):
-        """Monta a interface principal."""
-        # ── Container Principal ──
-        main = tk.Frame(self.root, bg=COLORS["bg_primary"])
+        C = COLORS
+        main = tk.Frame(self.root, bg=C["bg_primary"])
         main.pack(fill="both", expand=True)
-
-        # ── Header ──
         self._build_header(main)
-
-        # ── Corpo: Sidebar + Chat ──
-        body = tk.Frame(main, bg=COLORS["bg_primary"])
-        body.pack(fill="both", expand=True, padx=0, pady=0)
-
+        body = tk.Frame(main, bg=C["bg_primary"])
+        body.pack(fill="both", expand=True)
         self._build_sidebar(body)
         self._build_chat_area(body)
 
     def _build_header(self, parent):
-        header = tk.Frame(parent, bg=COLORS["bg_secondary"], height=52)
+        C = COLORS
+        header = tk.Frame(parent, bg=C["bg_secondary"], height=52)
         header.pack(fill="x", side="top")
         header.pack_propagate(False)
-
-        # Logo
-        logo = tk.Label(
-            header,
-            text="◈ KOSMOS",
-            font=("Consolas", 15, "bold"),
-            bg=COLORS["bg_secondary"],
-            fg=COLORS["accent"]
-        )
-        logo.pack(side="left", padx=20, pady=10)
-
-        sub = tk.Label(
-            header,
-            text="Agent v2.1  |  CNGSM CODE",
-            font=FONT_SMALL,
-            bg=COLORS["bg_secondary"],
-            fg=COLORS["text_muted"]
-        )
-        sub.pack(side="left", padx=0, pady=10)
-
-        # Status do ambiente (KVM / Docker)
-        self.env_status_label = tk.Label(
-            header,
-            text="● Verificando ambiente...",
-            font=FONT_SMALL,
-            bg=COLORS["bg_secondary"],
-            fg=COLORS["accent_yellow"]
-        )
+        tk.Label(header, text="◈ KOSMOS KOSMOS",
+                 font=("Consolas", 15, "bold"), bg=C["bg_secondary"], fg=C["accent"]).pack(side="left", padx=20, pady=10)
+        tk.Label(header, text="v2.5  |  CNGSM — Cloves Nascimento",
+                 font=FONT_SMALL, bg=C["bg_secondary"], fg=C["text_muted"]).pack(side="left")
+        self.env_status_label = tk.Label(header, text="● Verificando ambiente...",
+                                          font=FONT_SMALL, bg=C["bg_secondary"], fg=C["accent_yellow"])
         self.env_status_label.pack(side="right", padx=20)
 
     def _build_sidebar(self, parent):
-        sidebar = tk.Frame(parent, bg=COLORS["bg_secondary"], width=240)
+        C = COLORS
+        sidebar = tk.Frame(parent, bg=C["bg_secondary"], width=240)
         sidebar.pack(side="left", fill="y")
         sidebar.pack_propagate(False)
 
-        # ── Seção de Modo ──
-        tk.Label(
-            sidebar, text="MODO DE OPERAÇÃO",
-            font=("Consolas", 8), bg=COLORS["bg_secondary"],
-            fg=COLORS["text_muted"]
-        ).pack(anchor="w", padx=16, pady=(18, 4))
+        tk.Label(sidebar, text="MODO", font=("Segoe UI", 8, "bold"),
+                 bg=C["bg_secondary"], fg=C["text_muted"]).pack(anchor="w", padx=16, pady=(16, 4))
 
         self.mode_var = tk.StringVar(value="⚡ Auto-Dev")
-        self.mode_combo = ttk.Combobox(
-            sidebar,
+        self.mode_combo = ttk.Combobox(sidebar,
             textvariable=self.mode_var,
             values=list(self.MODES.keys()),
-            state="readonly",
-            style="Dark.TCombobox",
-            font=FONT_BODY
-        )
-        self.mode_combo.pack(fill="x", padx=16, pady=(0, 4))
-
-        self.mode_desc = tk.Label(
-            sidebar, text=self.MODES["⚡ Auto-Dev"]["description"],
-            font=FONT_SMALL, bg=COLORS["bg_secondary"],
-            fg=COLORS["text_muted"], wraplength=200, justify="left"
-        )
-        self.mode_desc.pack(anchor="w", padx=16, pady=(0, 12))
+            state="readonly", style="Dark.TCombobox", width=22)
+        self.mode_combo.pack(padx=12, pady=(0, 4))
         self.mode_combo.bind("<<ComboboxSelected>>", self._on_mode_change)
 
-        ttk.Separator(sidebar, style="Dark.TSeparator").pack(fill="x", padx=16, pady=8)
+        self.mode_desc = tk.Label(sidebar, text=self.MODES["⚡ Auto-Dev"]["description"],
+                                   font=FONT_SMALL, bg=C["bg_secondary"], fg=C["text_secondary"],
+                                   wraplength=210, justify="left")
+        self.mode_desc.pack(anchor="w", padx=14, pady=(0, 12))
 
-        # ── Configurações Avançadas ──
-        tk.Label(
-            sidebar, text="AVANÇADO",
-            font=("Consolas", 8), bg=COLORS["bg_secondary"],
-            fg=COLORS["text_muted"]
-        ).pack(anchor="w", padx=16, pady=(4, 4))
+        ttk.Separator(sidebar, orient="horizontal").pack(fill="x", padx=12, pady=4)
 
-        adv_frame = tk.Frame(sidebar, bg=COLORS["bg_secondary"])
-        adv_frame.pack(fill="x", padx=16)
+        tk.Label(sidebar, text="AVANÇADO", font=("Segoe UI", 8, "bold"),
+                 bg=C["bg_secondary"], fg=C["text_muted"]).pack(anchor="w", padx=16, pady=(8, 4))
 
         self.adv_vars = {
-            "branches": tk.StringVar(value="1"),
+            "branches":       tk.StringVar(value="1"),
             "max_iterations": tk.StringVar(value="5"),
         }
+        for lbl, key in [("Branches (ToT):", "branches"), ("Max Iterações:", "max_iterations")]:
+            row = tk.Frame(sidebar, bg=C["bg_secondary"])
+            row.pack(fill="x", padx=12, pady=2)
+            tk.Label(row, text=lbl, font=FONT_SMALL, bg=C["bg_secondary"],
+                     fg=C["text_secondary"], width=16, anchor="w").pack(side="left")
+            e = tk.Entry(row, textvariable=self.adv_vars[key], width=5,
+                         font=FONT_MONO, bg=C["bg_input"], fg=C["text_primary"],
+                         insertbackground=C["accent"], bd=0,
+                         highlightthickness=1, highlightcolor=C["accent"],
+                         highlightbackground=C["border"])
+            e.pack(side="left", padx=4)
 
-        for label, key in [("Branches (ToT):", "branches"), ("Max Iterações:", "max_iterations")]:
-            row = tk.Frame(adv_frame, bg=COLORS["bg_secondary"])
-            row.pack(fill="x", pady=2)
-            tk.Label(row, text=label, font=FONT_SMALL,
-                     bg=COLORS["bg_secondary"], fg=COLORS["text_secondary"]).pack(side="left")
-            e = tk.Entry(
-                row, textvariable=self.adv_vars[key],
-                bg=COLORS["bg_input"], fg=COLORS["text_primary"],
-                insertbackground=COLORS["accent"],
-                relief="flat", font=FONT_SMALL, width=5
-            )
-            e.pack(side="right")
+        ttk.Separator(sidebar, orient="horizontal").pack(fill="x", padx=12, pady=8)
 
-        ttk.Separator(sidebar, style="Dark.TSeparator").pack(fill="x", padx=16, pady=12)
+        # Botões de sessão
+        for lbl, cmd in [("↺ Nova Sessão", self._new_session),
+                          ("⬜ Limpar Chat",  self._clear_chat),
+                          ("↓ Exportar",     self._export_history)]:
+            btn = tk.Button(sidebar, text=lbl, font=FONT_SMALL,
+                            bg=C["bg_card"], fg=C["text_secondary"],
+                            activebackground=C["bg_input"], relief="flat", bd=0,
+                            cursor="hand2", command=cmd, anchor="w")
+            btn.pack(fill="x", padx=12, pady=2, ipady=4)
 
-        # ── Status de Segurança ──
-        tk.Label(
-            sidebar, text="SEGURANÇA",
-            font=("Consolas", 8), bg=COLORS["bg_secondary"],
-            fg=COLORS["text_muted"]
-        ).pack(anchor="w", padx=16, pady=(0, 6))
-
-        self.sec_indicators = {}
-        security_items = [
-            ("symlink_protection", "Symlink Traversal"),
-            ("unsafe_disabled",    "python_unsafe OFF"),
-            ("vsock_limit",        "Vsock Size Limit"),
-            ("secret_sanitize",    "Secret Sanitizer"),
-        ]
-        for key, label in security_items:
-            row = tk.Frame(sidebar, bg=COLORS["bg_secondary"])
-            row.pack(fill="x", padx=16, pady=1)
-            dot = tk.Label(row, text="●", font=FONT_SMALL,
-                           bg=COLORS["bg_secondary"], fg=COLORS["accent_green"])
-            dot.pack(side="left", padx=(0, 6))
-            tk.Label(row, text=label, font=FONT_SMALL,
-                     bg=COLORS["bg_secondary"], fg=COLORS["text_secondary"]).pack(side="left")
-            self.sec_indicators[key] = dot
-
-        ttk.Separator(sidebar, style="Dark.TSeparator").pack(fill="x", padx=16, pady=12)
-
-        # ── Ações ──
-        btn_style = {
-            "bg": COLORS["bg_input"],
-            "fg": COLORS["text_secondary"],
-            "relief": "flat",
-            "font": FONT_SMALL,
-            "cursor": "hand2",
-            "pady": 6,
-        }
-
-        tk.Button(
-            sidebar, text="⬇  Exportar Histórico",
-            command=self._export_history,
-            **btn_style
-        ).pack(fill="x", padx=16, pady=2)
-
-        tk.Button(
-            sidebar, text="🗑  Limpar Conversa",
-            command=self._clear_chat,
-            **btn_style
-        ).pack(fill="x", padx=16, pady=2)
-
-        tk.Button(
-            sidebar, text="↺  Nova Sessão",
-            command=self._new_session,
-            **btn_style
-        ).pack(fill="x", padx=16, pady=2)
+        # Info hardware
+        hw = self.boot_config.get("hw", {})
+        if hw:
+            ttk.Separator(sidebar, orient="horizontal").pack(fill="x", padx=12, pady=8)
+            ram = hw.get("ram_gb", "?")
+            cores = hw.get("cores", "?")
+            mode_hw = "KVM" if hw.get("kvm") else "Docker" if hw.get("docker") else "offline"
+            for txt in [f"RAM: {ram}GB  Cores: {cores}", f"Sandbox: {mode_hw}"]:
+                tk.Label(sidebar, text=txt, font=("Segoe UI", 8),
+                         bg=C["bg_secondary"], fg=C["text_muted"]).pack(anchor="w", padx=16, pady=1)
 
     def _build_chat_area(self, parent):
-        chat_container = tk.Frame(parent, bg=COLORS["bg_primary"])
-        chat_container.pack(side="left", fill="both", expand=True)
+        C = COLORS
+        chat_frame = tk.Frame(parent, bg=C["bg_primary"])
+        chat_frame.pack(side="left", fill="both", expand=True)
 
-        # ── Área de Mensagens ──
-        self.chat_area = scrolledtext.ScrolledText(
-            chat_container,
-            wrap=tk.WORD,
-            font=FONT_BODY,
-            bg=COLORS["bg_primary"],
-            fg=COLORS["text_primary"],
-            insertbackground=COLORS["accent"],
-            selectbackground=COLORS["accent"],
-            relief="flat",
-            padx=24,
-            pady=16,
+        # Área de mensagens
+        self.chat_area = tk.Text(
+            chat_frame,
+            font=FONT_BODY, wrap="word",
+            bg=C["bg_primary"], fg=C["text_primary"],
+            insertbackground=C["accent"],
+            selectbackground=C["accent"],
+            relief="flat", bd=0,
+            padx=20, pady=16,
             state="disabled",
-            spacing3=4,
+            cursor="arrow",
         )
-        self.chat_area.pack(fill="both", expand=True, padx=0, pady=(0, 0))
+        self.chat_area.pack(fill="both", expand=True)
 
-        # ── Configuração de Tags ──
-        self.chat_area.tag_configure("user_name",
-            font=("Consolas", 9, "bold"), foreground=COLORS["accent"])
-        self.chat_area.tag_configure("user_text",
-            font=FONT_BODY, foreground=COLORS["text_primary"],
-            lmargin1=0, lmargin2=0)
-        self.chat_area.tag_configure("bot_name",
-            font=("Consolas", 9, "bold"), foreground=COLORS["accent_green"])
-        self.chat_area.tag_configure("bot_text",
-            font=FONT_BODY, foreground=COLORS["text_primary"])
-        self.chat_area.tag_configure("thinking",
-            font=FONT_MONO, foreground=COLORS["thinking"],
-            lmargin1=16, lmargin2=16)
-        self.chat_area.tag_configure("system",
-            font=("Consolas", 9), foreground=COLORS["text_muted"])
-        self.chat_area.tag_configure("success",
-            font=FONT_SMALL, foreground=COLORS["success"])
-        self.chat_area.tag_configure("error_text",
-            font=FONT_BODY, foreground=COLORS["error"])
-        self.chat_area.tag_configure("warning_text",
-            font=FONT_SMALL, foreground=COLORS["warning"])
-        self.chat_area.tag_configure("timestamp",
-            font=("Consolas", 8), foreground=COLORS["text_muted"])
-        self.chat_area.tag_configure("divider",
-            font=("Consolas", 8), foreground=COLORS["border"])
-        self.chat_area.tag_configure("code_block",
-            font=FONT_MONO, foreground=COLORS["accent_yellow"],
-            background=COLORS["bg_card"],
-            lmargin1=16, lmargin2=16)
+        scroll = tk.Scrollbar(chat_frame, command=self.chat_area.yview,
+                               bg=C["bg_secondary"], troughcolor=C["bg_primary"],
+                               activebackground=C["accent"], relief="flat", bd=0, width=8)
+        self.chat_area.configure(yscrollcommand=scroll.set)
+        scroll.place(relx=1, rely=0, relheight=1, anchor="ne", width=8)
 
-        # ── Input Area ──
-        input_bar = tk.Frame(chat_container, bg=COLORS["bg_secondary"], pady=12)
+        # Tags de texto
+        self.chat_area.tag_configure("user",    foreground=C["accent"],        font=FONT_BOLD)
+        self.chat_area.tag_configure("bot",     foreground=C["text_primary"],  font=FONT_BODY)
+        self.chat_area.tag_configure("system",  foreground=C["system_text"],   font=FONT_SMALL)
+        self.chat_area.tag_configure("thinking",foreground=C["thinking"],      font=FONT_SMALL)
+        self.chat_area.tag_configure("success", foreground=C["success"],       font=FONT_SMALL)
+        self.chat_area.tag_configure("error",   foreground=C["error"],         font=FONT_SMALL)
+        self.chat_area.tag_configure("warning", foreground=C["warning"],       font=FONT_SMALL)
+
+        # ── Barra de input ─────────────────────────────────────
+        input_bar = tk.Frame(chat_frame, bg=C["bg_secondary"], pady=10)
         input_bar.pack(fill="x", side="bottom")
 
-        input_inner = tk.Frame(input_bar, bg=COLORS["bg_input"],
-                                highlightbackground=COLORS["border"],
-                                highlightthickness=1)
-        input_inner.pack(fill="x", padx=20, pady=0)
+        input_inner = tk.Frame(input_bar, bg=C["bg_input"],
+                                highlightthickness=1,
+                                highlightcolor=C["accent"],
+                                highlightbackground=C["border"])
+        input_inner.pack(fill="x", padx=16, pady=0)
 
+        # Hint de atalho
+        hint = tk.Label(input_bar, text="Enter → enviar  |  Shift+Enter → nova linha",
+                        font=("Segoe UI", 8), bg=C["bg_secondary"], fg=C["text_muted"])
+        hint.pack(anchor="e", padx=20, pady=(0, 2))
+
+        # ── Text widget responsivo ──────────────────────────────
         self.task_entry = tk.Text(
             input_inner,
             font=FONT_BODY,
-            bg=COLORS["bg_input"],
-            fg=COLORS["text_primary"],
-            insertbackground=COLORS["accent"],
-            relief="flat",
-            height=3,
-            wrap=tk.WORD,
-            padx=12,
-            pady=8,
+            bg=C["bg_input"], fg=C["text_primary"],
+            insertbackground=C["accent"],
+            relief="flat", bd=0,
+            height=3,           # altura inicial em linhas
+            wrap="word",
+            padx=12, pady=10,
         )
-        self.task_entry.pack(side="left", fill="both", expand=True)
-        self.task_entry.bind("<Return>", self._on_enter_key)
-        self.task_entry.bind("<Shift-Return>", lambda e: None)  # Shift+Enter = nova linha
+        self.task_entry.pack(fill="both", expand=True, side="left")
+        self.task_entry.focus_set()
 
-        btn_frame = tk.Frame(input_inner, bg=COLORS["bg_input"])
-        btn_frame.pack(side="right", padx=8)
+        # Placeholder
+        self._placeholder_text = "Digite sua tarefa... (Enter para enviar)"
+        self._placeholder_active = True
+        self.task_entry.insert("1.0", self._placeholder_text)
+        self.task_entry.configure(fg=C["text_muted"])
 
+        self.task_entry.bind("<FocusIn>",  self._on_focus_in)
+        self.task_entry.bind("<FocusOut>", self._on_focus_out)
+
+        # ── Bind de teclado responsivo ──────────────────────────
+        self.task_entry.bind("<Return>",       self._on_enter_key)
+        self.task_entry.bind("<KP_Enter>",     self._on_enter_key)
+        # Shift+Enter → insere \n (comportamento padrão do Text widget)
+        self.task_entry.bind("<Shift-Return>", lambda e: None)
+
+        # Botão enviar
         self.send_btn = tk.Button(
-            btn_frame,
-            text="Enviar",
-            command=self.start_engine_ui,
-            bg=COLORS["accent"],
-            fg=COLORS["text_primary"],
-            font=("Segoe UI Semibold", 10),
-            relief="flat",
-            padx=16,
-            pady=6,
+            input_inner,
+            text="↑",
+            font=("Segoe UI Semibold", 14),
+            bg=C["send_btn"], fg=C["send_fg"],
+            activebackground=C["thinking"],
+            relief="flat", bd=0,
+            width=4,
             cursor="hand2",
-            activebackground="#6a5ae0",
-            activeforeground="white",
+            command=self.start_engine_ui
         )
-        self.send_btn.pack(pady=4)
+        self.send_btn.pack(side="right", padx=8, pady=8, fill="y")
 
-        hint = tk.Label(
-            input_bar,
-            text="Enter para enviar  •  Shift+Enter para nova linha",
-            font=("Consolas", 8),
-            bg=COLORS["bg_secondary"],
-            fg=COLORS["text_muted"]
-        )
-        hint.pack()
+        self._log_system("KOSMOS KOSMOS v2.5 pronto. Digite uma tarefa.")
 
-        # Mensagem de boas-vindas
-        self._log_system("KOSMOS Agent v2.1 pronto. Patches de segurança aplicados.")
-        self._log_system("Vulnerabilidades ATK-01..08 mitigadas. Sistema seguro para produção.")
+    # ── Placeholder ─────────────────────────────────────────────
 
-    # ─── Logging no Chat ───
+    def _on_focus_in(self, event):
+        if self._placeholder_active:
+            self.task_entry.delete("1.0", tk.END)
+            self.task_entry.configure(fg=COLORS["text_primary"])
+            self._placeholder_active = False
 
-    def _log_to_chat(self, func):
-        """Wrapper para executar inserção no chat na thread principal."""
-        self.root.after(0, func)
+    def _on_focus_out(self, event):
+        if not self.task_entry.get("1.0", tk.END).strip():
+            self.task_entry.insert("1.0", self._placeholder_text)
+            self.task_entry.configure(fg=COLORS["text_muted"])
+            self._placeholder_active = True
 
-    def _chat_insert(self, *args):
+    # ── Chat log ─────────────────────────────────────────────────
+
+    def _append(self, text: str, tag: str, prefix: str = ""):
         self.chat_area.configure(state="normal")
-        self.chat_area.insert(tk.END, *args)
+        if prefix:
+            self.chat_area.insert(tk.END, prefix, tag)
+        self.chat_area.insert(tk.END, text + "\n", tag)
         self.chat_area.see(tk.END)
         self.chat_area.configure(state="disabled")
-        self.root.update_idletasks()
 
-    def _log_system(self, message: str):
-        self._chat_insert(f"  {message}\n", "system")
+    def _log_user(self, text):
+        self._append(text, "user", "  ◎ USUÁRIO  " + datetime.now().strftime("%H:%M") + "\n  ")
 
-    def _log_user(self, message: str):
-        ts = datetime.now().strftime("%H:%M")
-        self._chat_insert(f"\n", "divider")
-        self._chat_insert(f"  ◎ USUÁRIO  ", "user_name")
-        self._chat_insert(f"{ts}\n", "timestamp")
-        self._chat_insert(f"  {message}\n", "user_text")
+    def _log_bot(self, text):
+        self._append(text, "bot", "  ◈ KOSMOS  " + datetime.now().strftime("%H:%M") + "\n  ")
 
-    def _log_bot(self, message: str):
-        ts = datetime.now().strftime("%H:%M")
-        self._chat_insert(f"\n", "divider")
-        self._chat_insert(f"  ◈ KOSMOS  ", "bot_name")
-        self._chat_insert(f"{ts}\n", "timestamp")
-        self._chat_insert(f"  {message}\n", "bot_text")
+    def _log_thinking(self, text):
+        self._append("    ↳ " + text, "thinking")
 
-    def _log_thinking(self, message: str):
-        """Stream de pensamentos em tempo real."""
-        self._chat_insert(f"    ↳ {message}\n", "thinking")
+    def _log_system(self, text):
+        self._append("  " + text, "system")
 
-    def _log_success(self, message: str):
-        self._chat_insert(f"  ✓ {message}\n", "success")
+    def _log_success(self, text):
+        self._append("  ✓ " + text, "success")
 
-    def _log_error(self, message: str):
-        self._chat_insert(f"  ✗ {message}\n", "error_text")
+    def _log_error(self, text):
+        self._append("  ✗ " + text, "error")
 
-    def _log_warning(self, message: str):
-        self._chat_insert(f"  ⚠ {message}\n", "warning_text")
+    def _log_warning(self, text):
+        self._append("  ⚠ " + text, "warning")
 
-    # ─── Consumidor de Queue ───
+    # ── Queue consumer ───────────────────────────────────────────
 
     def _start_queue_consumer(self):
-        """Consome mensagens da thread de execução e atualiza a UI."""
         def consume():
             while True:
                 try:
@@ -508,10 +716,8 @@ class KosmosPanel:
                     mtype = msg.get("type")
                     if mtype == "log":
                         level = msg.get("level", "info")
-                        text = msg.get("message", "")
-                        if level == "thought":
-                            self._log_thinking(text)
-                        elif level == "success":
+                        text  = msg.get("message", "")
+                        if level == "success":
                             self._log_success(text)
                         elif level == "error":
                             self._log_error(text)
@@ -523,46 +729,48 @@ class KosmosPanel:
                         self._handle_result(msg["result"])
                     elif mtype == "error":
                         self._log_error(msg["message"])
-                except:
+                except Exception:
                     pass
                 self.root.after(50, consume)
                 break
         self.root.after(100, consume)
 
     def _handle_result(self, result: dict):
-        """Processa o resultado final do engine."""
         if result["status"] == "success":
             res = result.get("result", "")
             if isinstance(res, dict):
                 output = res.get("output", "") or ""
-                error = res.get("error", "")
+                error  = res.get("error", "")
                 if error and not output:
                     self._log_error(error)
                 else:
                     self._log_bot(output or "Tarefa concluída com sucesso.")
             else:
                 self._log_bot(str(res))
-
             iters = result.get("iterations", "?")
             total = result.get("total_time", 0)
             self._log_success(f"Concluído em {total:.1f}s • {iters} iteração(ões)")
         else:
             self._log_warning("Agente não completou a tarefa dentro do limite de iterações.")
 
-        # Re-habilita input
-        self.send_btn.configure(state="normal", bg=COLORS["accent"])
+        self.send_btn.configure(state="normal", bg=COLORS["send_btn"])
         self.task_entry.configure(state="normal")
         self.task_entry.focus_set()
         self._thinking_active = False
 
-    # ─── Engine ───
+    # ── Engine ───────────────────────────────────────────────────
 
     def _on_enter_key(self, event):
-        if not event.state & 0x1:  # Sem Shift
-            self.start_engine_ui()
-            return "break"
+        # Shift+Enter → nova linha (deixa o Text widget lidar)
+        if event.state & 0x1:
+            return None
+        # Enter → envia
+        self.start_engine_ui()
+        return "break"
 
     def start_engine_ui(self):
+        if self._placeholder_active:
+            return
         task = self.task_entry.get("1.0", tk.END).strip()
         if not task:
             return
@@ -570,6 +778,7 @@ class KosmosPanel:
         self._log_user(task)
         self.session_log.append({"role": "user", "content": task, "time": datetime.now().isoformat()})
         self.task_entry.delete("1.0", tk.END)
+        self._placeholder_active = False
 
         adv = self._get_config()
         self._log_thinking(f"Iniciando engine [{adv['mode']}]...")
@@ -578,23 +787,17 @@ class KosmosPanel:
         self.task_entry.configure(state="disabled")
         self._thinking_active = True
 
-        threading.Thread(
-            target=self._run_engine_thread,
-            args=(task, adv),
-            daemon=True
-        ).start()
+        threading.Thread(target=self._run_engine_thread, args=(task, adv), daemon=True).start()
 
     def _run_engine_thread(self, task: str, config: dict):
         try:
-            adv = config["advanced"]
-
-            # Patch: injeta streaming handler no logger
             import logging
             handler = _QueueLogHandler(self.message_queue)
             handler.setLevel(logging.INFO)
             kosmos_logger = logging.getLogger("kosmos")
             kosmos_logger.addHandler(handler)
 
+            adv = config["advanced"]
             if self.engine_instance is None or self.current_engine_config != config:
                 self.engine_instance = KosmosEngine(
                     max_iterations=adv["max_iterations"],
@@ -605,45 +808,36 @@ class KosmosPanel:
                 self.current_engine_config = config
 
             result = self.engine_instance.run(task)
-
             kosmos_logger.removeHandler(handler)
             self.message_queue.put({"type": "result", "result": result})
-            self.session_log.append({
-                "role": "assistant",
-                "result": result,
-                "time": datetime.now().isoformat()
-            })
+            self.session_log.append({"role": "assistant", "result": result, "time": datetime.now().isoformat()})
 
         except Exception as e:
             self.message_queue.put({"type": "error", "message": f"ERRO CRÍTICO: {str(e)}"})
-            self.root.after(0, lambda: self.send_btn.configure(state="normal", bg=COLORS["accent"]))
+            self.root.after(0, lambda: self.send_btn.configure(state="normal", bg=COLORS["send_btn"]))
             self.root.after(0, lambda: self.task_entry.configure(state="normal"))
 
-    # ─── Helpers ───
-
     def _get_config(self) -> dict:
-        mode = self.mode_var.get()
+        mode     = self.mode_var.get()
         mode_cfg = self.MODES.get(mode, self.MODES["⚡ Auto-Dev"])
         return {
             "mode": mode,
             "advanced": {
-                "branches": int(self.adv_vars["branches"].get() or mode_cfg["branches"]),
+                "branches":       int(self.adv_vars["branches"].get() or mode_cfg["branches"]),
                 "max_iterations": int(self.adv_vars["max_iterations"].get() or mode_cfg["max_iterations"]),
             }
         }
 
     def _on_mode_change(self, event=None):
         mode = self.mode_var.get()
-        cfg = self.MODES.get(mode, {})
+        cfg  = self.MODES.get(mode, {})
         self.mode_desc.configure(text=cfg.get("description", ""))
         self.adv_vars["branches"].set(str(cfg.get("branches", 1)))
         self.adv_vars["max_iterations"].set(str(cfg.get("max_iterations", 5)))
         self._log_system(f"Modo alterado: {mode}")
 
     def _check_environment(self):
-        """Verifica KVM e Docker e atualiza o indicador do header."""
         def check():
-            import subprocess
             kvm = os.path.exists("/dev/kvm") and os.access("/dev/kvm", os.R_OK | os.W_OK)
             docker = False
             try:
@@ -651,24 +845,14 @@ class KosmosPanel:
                 docker = r.returncode == 0
             except Exception:
                 pass
-
             if kvm:
-                status = "● KVM ativo — Firecracker pronto"
-                color = COLORS["success"]
+                status, color = "● KVM ativo — Firecracker pronto", COLORS["success"]
             elif docker:
-                status = "● Docker ativo — Fallback seguro"
-                color = COLORS["accent_yellow"]
+                status, color = "● Docker ativo — Fallback seguro", COLORS["accent_yellow"]
             else:
-                status = "⚠ KVM e Docker indisponíveis"
-                color = COLORS["error"]
-
-            self.root.after(0, lambda: self.env_status_label.configure(
-                text=status, fg=color
-            ))
-            self.root.after(0, lambda: self._log_system(
-                f"Ambiente: {status.replace('●', '').replace('⚠', '').strip()}"
-            ))
-
+                status, color = "⚠ KVM e Docker indisponíveis", COLORS["error"]
+            self.root.after(0, lambda: self.env_status_label.configure(text=status, fg=color))
+            self.root.after(0, lambda: self._log_system(status.replace("●","").replace("⚠","").strip()))
         threading.Thread(target=check, daemon=True).start()
 
     def _clear_chat(self):
@@ -699,11 +883,14 @@ class KosmosPanel:
             self._log_system(f"Histórico exportado: {os.path.basename(path)}")
 
 
+# ══════════════════════════════════════════════════════════════════
+# LOG HANDLER
+# ══════════════════════════════════════════════════════════════════
+
 class _QueueLogHandler:
-    """Handler de logging que envia mensagens para a queue da UI."""
     def __init__(self, q: queue.Queue):
         self.q = q
-        self.level = 20  # INFO
+        self.level = 20
 
     def setLevel(self, level):
         self.level = level
@@ -712,7 +899,6 @@ class _QueueLogHandler:
         import logging
         if record.levelno >= self.level:
             msg = record.getMessage()
-            # Filtra linhas de debug muito técnicas
             skip = ["API call #", "DeepSeekClient", "FAISS", "Popen"]
             if any(s in msg for s in skip):
                 return
@@ -722,11 +908,28 @@ class _QueueLogHandler:
         self.handle(record)
 
 
+# ══════════════════════════════════════════════════════════════════
+# ENTRY POINT
+# ══════════════════════════════════════════════════════════════════
+
 def start_engine_panel():
     try:
-        root = tk.Tk()
-        app = KosmosPanel(root)
-        root.mainloop()
+        # 1. Boot panel
+        boot_root = tk.Tk()
+        boot_app  = BootPanel(boot_root)
+        boot_root.mainloop()
+
+        if boot_app.result is None:
+            print("[KOSMOS] Boot cancelado.")
+            sys.exit(0)
+
+        boot_config = boot_app.result
+
+        # 2. Chat principal
+        main_root = tk.Tk()
+        KosmosPanel(main_root, boot_config=boot_config)
+        main_root.mainloop()
+
     except KeyboardInterrupt:
         print("\n[KOSMOS] Encerrando painel...")
         sys.exit(0)
