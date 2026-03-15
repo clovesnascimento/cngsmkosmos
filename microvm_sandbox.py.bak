@@ -12,27 +12,11 @@ import json
 import uuid
 import time
 import socket
+import signal
 import logging
 import subprocess
 import tempfile
-
-# ── Windows Compatibility: resource e signal são Unix-only ──────────────────
-import platform as _plat
-_IS_WINDOWS = _plat.system() == "Windows"
-if _IS_WINDOWS:
-    import signal  # signal existe no Windows mas sem SIGKILL
-    if not hasattr(signal, "SIGKILL"):
-        signal.SIGKILL = signal.SIGTERM  # stub para código legado
-
-    class _ResourceStub:
-        RLIMIT_AS = 0; RLIMIT_CPU = 1; RLIMIT_DATA = 2
-        def getrlimit(self, r): return (2**63, 2**63)
-        def setrlimit(self, r, limits): pass
-    resource = _ResourceStub()
-else:
-    import signal
-    import resource
-# ── End Windows Compatibility ────────────────────────────────────────────────
+import resource
 from typing import Dict, Any, Optional
 from dataclasses import dataclass
 
@@ -381,21 +365,17 @@ class MicroVMSandbox:
                 f.write(code)
                 tmp_path = f.name
 
-            # Monta workspace para que arquivos criados pelo código persistam no host
-            workspace_mount = []
-            if cwd and os.path.isdir(cwd):
-                workspace_mount = ["-v", f"{cwd}:/workspace:rw", "-w", "/workspace"]
-
             cmd = [
                 "docker", "run",
                 "--rm",                          # Remove container após execução
                 "--network", "none",             # Sem acesso à rede
-                "--tmpfs", "/tmp:size=128m",     # /tmp temporário com limite
-                "--memory", "512m",              # Limite de RAM [ATK-04]
-                "--cpus", "1.0",                 # Limite de CPU
+                "--read-only",                   # Filesystem read-only
+                "--tmpfs", "/tmp:size=64m",      # /tmp temporário com limite
+                "--memory", "256m",              # Limite de RAM [ATK-04]
+                "--cpus", "0.5",                 # Limite de CPU [ATK-04]
+                "--user", "nobody",              # Usuário não-privilegiado
                 "--security-opt", "no-new-privileges",
                 "-v", f"{tmp_path}:/code.py:ro", # Código como read-only
-                *workspace_mount,               # Workspace montado (rw)
                 "python:3.11-slim",
                 "python", "/code.py"
             ]

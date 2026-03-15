@@ -127,11 +127,7 @@ class KosmosEngine:
             self.planner.reviewer.use_llm = False
 
         # Tracking
-
-
-        self.session_id = __import__('uuid').uuid4().hex[:8]
-
-
+        self.session_id = str(uuid.uuid4())[:8]
         self._start_time = None
 
         llm_status = 'DeepSeek' if self._llm_client else 'templates'
@@ -205,14 +201,6 @@ class KosmosEngine:
 
         current_task = task
 
-        # [KOSMOS-v2.5] Injeção proativa de lições da memória persistente
-        if getattr(self, '_v25_active', False):
-            _lesson_injection = self._v25_memory.get_prompt_injection(task, max_lessons=3)
-            if _lesson_injection and self.verbose:
-                safe_print(f"  📚 [Memória] Lições relevantes encontradas")
-            # Reset loop detector para nova tarefa
-            self._v25_loop.reset(task)
-
         for iteration in range(self.max_iterations):
             elapsed = time.time() - self._start_time
 
@@ -239,45 +227,9 @@ class KosmosEngine:
 
             # ─── 2. EXECUÇÃO (Tool Router → MicroVM Sandbox) ───
             if self.verbose:
-                safe_print(f"  🚀 [Execute] Roteando para: {plan.get('tool', 'python')}")
+                safe_print(f"\n  🚀 [Execute] Roteando para: {plan.get('tool', 'python')}")
 
-            # [KOSMOS-v2.5] LoopDetector — detecta loop antes de executar
-            if getattr(self, '_v25_active', False):
-                _strategy = plan.get('strategy', 'llm_generated')
-                if self._v25_loop.is_loop(task, _strategy):
-                    _alt = self._v25_loop.suggest_alternative(task, _strategy)
-                    if self.verbose:
-                        safe_print(f"  🔄 [LoopDetector] Loop detectado! Alternativa: {_alt}")
-                    current_task = f"{task} [FORÇAR ESTRATÉGIA: {_alt}]"
-                    self._v25_logger.log_loop_detected(
-                        task=task, strategy=_strategy,
-                        count=3, alternative=_alt
-                    )
-
-            # [KOSMOS-v2.5] HITL — verifica risco antes de executar Python
-            _hitl_approved = True
-            if getattr(self, '_v25_active', False) and plan.get('tool') == 'python':
-                _code = plan.get('code', '')
-                if _code:
-                    _hitl_result = self._v25_hitl.review(_code, task=task)
-                    _hitl_approved = _hitl_result['approved']
-                    if not _hitl_approved:
-                        if self.verbose:
-                            safe_print(f"  🛡️  [HITL] Bloqueado: {_hitl_result['reason'][:80]}")
-                        self._v25_logger.log_hitl(
-                            task=task,
-                            risk_level=_hitl_result['risk_level'],
-                            approved=False,
-                            reason=_hitl_result['reason'],
-                        )
-                        result = {
-                            "output": None,
-                            "error": f"[HITL] {_hitl_result['reason']}",
-                            "exit_code": -1,
-                        }
-
-            if _hitl_approved:
-                result = self.router.execute(plan)
+            result = self.router.execute(plan)
 
             if self.verbose:
                 if result.get("output"):
@@ -306,51 +258,6 @@ class KosmosEngine:
                 critique=critique.to_dict(),
                 iteration=iteration,
             )
-
-            # [KOSMOS-v2.5] Memória persistente + log semântico
-            if getattr(self, '_v25_active', False):
-                _error_msg = result.get('error') or ''
-                _exit_code = result.get('exit_code', -1)
-
-                # Classifica erro com RefinedReflexion
-                if not critique.success and _error_msg:
-                    _err_class = self._v25_reflexion.classify(
-                        error=_error_msg, exit_code=_exit_code
-                    )
-                    _err_type  = _err_class['error_type']
-                    _err_strat = _err_class['strategy']
-                else:
-                    _err_type  = None
-                    _err_strat = None
-
-                # Armazena na memória persistente
-                self._v25_memory.store(
-                    task=task,
-                    success=critique.success,
-                    error=_error_msg or None,
-                    strategy=plan.get('strategy'),
-                )
-
-                # Log semântico
-                self._v25_logger.log_attempt(
-                    task=task,
-                    attempt=iteration,
-                    strategy=plan.get('strategy', 'unknown'),
-                    success=critique.success,
-                    error_type=_err_type,
-                    duration=time.time() - self._start_time,
-                )
-
-                # Rota semântica para próxima iteração se falhou
-                if not critique.success and _err_type:
-                    _replan = self._v25_reflexion.get_replan_instruction(
-                        _err_type, _error_msg
-                    )
-                    if self.verbose:
-                        safe_print(f"  🧠 [v2.5] Erro classificado: {_err_type} → {_err_strat}")
-                    # Sobrescreve o replan do Reflexion com um mais específico
-                    if critique.replan and _err_type not in ('logical_or_unknown',):
-                        critique.replan = _replan
 
             # ─── 5. DECISÃO ───
             if critique.success:

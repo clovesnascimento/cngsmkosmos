@@ -169,27 +169,9 @@ class Reflexion:
             
         # ─── Heurística de Criação ───
         # Se a tarefa pede para criar/gerar algo e o output é suspeitamente curto ( < 20 chars )
-        if any(kw in task_lower for kw in ["crie", "gere", "escreva", "faça", "landing",
-                                            "page", "html", "arquivo", "script"]):
-            # [KOSMOS-v2.3] patch threshold criacao
-            # Threshold reduzido: 3 chars eliminam prints vazios sem rejeitar
-            # prints curtos validos como 'OK', 'index.html criado', etc.
-            if len(output) < 3 and result.get("exit_code") == 0:
-                return False
-            # Sucesso real: arquivo HTML/py criado no workspace
-            if result.get("exit_code") == 0 and len(output) >= 3:
-                import os
-                workspace = os.path.join(os.path.dirname(os.path.abspath(__file__)), "workspace")
-                has_file = any(
-                    os.path.getsize(os.path.join(workspace, f)) > 500
-                    for f in os.listdir(workspace)
-                    if f.endswith(('.html', '.py', '.txt', '.csv', '.docx', '.xlsx'))
-                ) if os.path.isdir(workspace) else False
-                if has_file:
-                    return True
-                # Sem arquivo criado = output vazio de verdade
-                if len(output) > 100:
-                    return True
+        if any(kw in task_lower for kw in ["crie", "gere", "escreva", "faça", "landing"]):
+            if len(output) < 20 and result.get("exit_code") == 0:
+                # Pode ter sido um print bobo de fallback
                 return False
             
         return True

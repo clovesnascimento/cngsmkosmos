@@ -1,30 +1,19 @@
 """
-KOSMOS Agent — Tool Router [SECURITY PATCH v2.2]
+KOSMOS Agent — Tool Router [SECURITY PATCH v2.1]
 =================================================
 Correções aplicadas (Red Team Audit):
   [ATK-02] python_unsafe REMOVIDO de produção
   [ATK-03] abspath → realpath para bloquear symlink traversal
   [ATK-07] PYTHONPATH isolado no executor subprocess
   [ATK-04] ulimit de RAM/CPU no fallback subprocess
-
-Sanitizador v3 (bugfix):
-  - Scanner char-level em vez de regex com re.DOTALL
-  - Trata ''' dentro do conteúdo da string (CSS com apostrofe tripla)
-  - Trata triple-quotes não-terminadas (unterminated — o bug real do log)
-  - Usa ÚLTIMA ocorrência do quote de fechamento (não a primeira)
 """
 
 import logging
 import os
 import sys
-import platform
+import resource
 import shutil
 from typing import Dict, Any, Optional
-
-# ─── resource é exclusivo Unix — importação condicional ───
-_IS_WINDOWS = platform.system() == "Windows"
-if not _IS_WINDOWS:
-    import resource
 
 from microvm_sandbox import MicroVMSandbox
 from jupyter_executor import JupyterExecutor
@@ -75,7 +64,7 @@ class ToolRouter:
         self.workspace_root = os.path.realpath(raw_workspace)
 
         logger.info(
-            f"ToolRouter v2.2 inicializado | workspace={self.workspace_root} | "
+            f"ToolRouter v2.1 inicializado | workspace={self.workspace_root} | "
             f"Sandbox=Firecracker | Jupyter={'on' if enable_jupyter else 'off'}"
         )
 
@@ -194,185 +183,7 @@ class ToolRouter:
     def _route_sandbox(self, code: str) -> Dict[str, Any]:
         """MicroVM Firecracker — isolamento completo de hardware."""
         logger.info(f"→ MicroVM Sandbox [workspace={self.workspace_root}]")
-        code = self._sanitize_triple_quotes(code)
         return self.sandbox.run(code, cwd=self.workspace_root)
-
-    @staticmethod
-    def _sanitize_triple_quotes(code: str) -> str:
-        """
-        Sanitizador v3 — scanner character-level.
-
-        Problemas resolvidos vs v2 (regex com re.DOTALL):
-
-        CASO 1 — triple-quotes normais:
-            html = '''<html>...</html>'''
-            → codifica em base64 ✓
-
-        CASO 2 — ''' dentro do conteúdo (CSS com apostrofe tripla):
-            css = '''/* guide says: use ''' for docs */
-            body { color: red; }
-            '''
-            → v2 FALHAVA (encontrava o ''' interno como fechamento)
-            → v3 usa a ÚLTIMA ocorrência como fechamento ✓
-
-        CASO 3 — triple-quote não-terminada (unterminated):
-            html = '''<html>
-            <body>  ← sem fechar
-            → v2 FALHAVA (regex não encontrava match)
-            → v3 lê até EOF ou próxima atribuição ✓
-
-        CASO 4 — código sem triple-quotes:
-            → retorna inalterado (fast path via ast.parse) ✓
-        """
-        import ast
-        import re
-        import base64 as _b64
-
-        # Fast path: se parseia, não mexe
-        try:
-            ast.parse(code)
-            return code
-        except SyntaxError:
-            pass
-
-        logger.info("[Sanitizer v3] SyntaxError detectado — aplicando sanitização char-level")
-
-        # v3.1 — corrige newlines literais ANTES do scanner de triple-quotes
-        def _fix_literal_newlines(c):
-            out = []
-            i = 0
-            n = len(c)
-            while i < n:
-                ch = c[i]
-                if ch in (chr(39), chr(34)):
-                    # verifica triple-quote
-                    if c[i:i+3] in (chr(39)*3, chr(34)*3):
-                        out.append(ch)
-                        i += 1
-                        continue
-                    # string simples — escaneia ate fechar
-                    q = ch
-                    out.append(q)
-                    i += 1
-                    while i < n:
-                        if c[i] == chr(10):   # newline literal
-                            out.append(chr(92) + 'n')
-                        elif c[i] == chr(13): # CR literal
-                            out.append(chr(92) + 'r')
-                        elif c[i] == q and (i == 0 or c[i-1] != chr(92)):
-                            out.append(q)
-                            i += 1
-                            break
-                        else:
-                            out.append(c[i])
-                        i += 1
-                    continue
-                out.append(ch)
-                i += 1
-            return ''.join(out)
-
-        code = _fix_literal_newlines(code)
-
-        # Padrão de atribuição com triple-quote: VARNAME = ''' ou VARNAME = """
-        assignment_re = re.compile(
-            r'^(\s*\w[\w\s]*?)\s*=\s*(\'\'\'|""")',
-            re.MULTILINE
-        )
-
-        result_parts = []
-        last_end = 0
-        imports_added = False
-        n = len(code)
-
-        for m in assignment_re.finditer(code):
-            quote    = m.group(2)   # ''' ou """
-            varname  = m.group(1).strip()
-            content_start = m.end()
-
-            # Determina o limite de busca: início da próxima atribuição ou EOF
-            next_m    = assignment_re.search(code, content_start)
-            search_end = next_m.start() if next_m else n
-
-            # Encontra TODAS as ocorrências do quote de fechamento na região
-            region = code[content_start:search_end]
-            closes = [c.start() for c in re.finditer(re.escape(quote), region)]
-
-            if not closes:
-                # Unterminated — lê tudo até search_end (inclui trailing newline se houver)
-                content    = region.rstrip('\n')
-                close_abs  = search_end
-            else:
-                # Usa a ÚLTIMA ocorrência como fechamento real
-                # (evita confusão com ''' dentro do conteúdo CSS/HTML)
-                last_close = closes[-1]
-                content    = region[:last_close]
-                close_abs  = content_start + last_close + 3   # +3 para o quote em si
-
-            # Emite tudo antes desta atribuição inalterado
-            result_parts.append(code[last_end:m.start()])
-
-            # Import base64 uma única vez
-            if not imports_added:
-                result_parts.append("import base64 as _b64_shim\n")
-                imports_added = True
-
-            # Codifica conteúdo em base64 e emite decode inline
-            enc = _b64.b64encode(content.encode("utf-8")).decode("ascii")
-            result_parts.append(
-                f"{varname} = _b64_shim.b64decode('{enc}').decode('utf-8')\n"
-            )
-
-            last_end = close_abs
-
-        # Emite o restante do código após a última atribuição
-        result_parts.append(code[last_end:])
-        sanitized = "".join(result_parts)
-
-        # Sanitizador v3.1 — fix newline literal em strings simples
-        # f.write('texto\ncom newline') → f.write('texto\\ncom newline')
-        import re as _re
-        def _fix_newlines(c):
-            result = []
-            i = 0
-            while i < len(c):
-                if c[i] in (chr(39), chr(34)) and (i == 0 or c[i-1] != chr(92)):
-                    quote = c[i]
-                    # verifica se nao e triple-quote
-                    if c[i:i+3] not in (chr(39)*3, chr(34)*3):
-                        j = i + 1
-                        fixed = quote
-                        while j < len(c):
-                            if c[j] == chr(10):  # newline literal
-                                fixed += chr(92) + 'n'
-                            elif c[j] == chr(13):  # carriage return
-                                fixed += chr(92) + 'r'
-                            elif c[j] == quote and c[j-1] != chr(92):
-                                fixed += quote
-                                j += 1
-                                break
-                            else:
-                                fixed += c[j]
-                            j += 1
-                        result.append(fixed)
-                        i = j
-                        continue
-                result.append(c[i])
-                i += 1
-            return ''.join(result)
-
-        try:
-            ast.parse(sanitized)
-            logger.info("[Sanitizer v3] Código sanitizado com sucesso")
-            return sanitized
-        except SyntaxError:
-            sanitized = _fix_newlines(sanitized)
-            try:
-                ast.parse(sanitized)
-                logger.info("[Sanitizer v3.1] Newlines literais corrigidos com sucesso")
-                return sanitized
-            except SyntaxError as e:
-                logger.warning(f"[Sanitizer v3.1] Sanitização falhou ({e}) — retornando original")
-                return code
 
     def _route_jupyter(self, code: str) -> Dict[str, Any]:
         """Jupyter kernel local com estado persistente."""
@@ -385,12 +196,6 @@ class ToolRouter:
         """Escrita segura no workspace."""
         path = plan.get("path")
         content = plan.get("content", "")
-        # [KOSMOS-v2.4] Desescapa \n e \t vindos do JSON
-        if content and isinstance(content, str):
-            content = content.replace("\\n", "\n").replace("\\t", "\t").replace("\\r", "\r")
-        # [KOSMOS-v2.4] Desescapa \n e \t vindos do JSON
-        if content and isinstance(content, str):
-            content = content.replace("\\n", "\n").replace("\\t", "\t").replace("\\r", "\r")
         if not path:
             return {"output": None, "error": "Caminho (path) não especificado", "exit_code": -1}
         try:

@@ -77,9 +77,11 @@ class ProposerAgent:
         if self.use_llm:
             try:
                 llm_result = self._propose_with_llm(task, context)
-                if llm_result and llm_result.get("code"):
+                if llm_result and (llm_result.get("code") or llm_result.get("content")):
                     llm_result["id"] = self.proposal_count
-                    llm_result["tool"] = "python"
+                    # Preserva tool=write_file se o LLM escolheu; default python
+                    if not llm_result.get("tool"):
+                        llm_result["tool"] = "python"
                     llm_result["source"] = "deepseek_llm"
                     logger.info(
                         f"Proposta #{self.proposal_count}: LLM "

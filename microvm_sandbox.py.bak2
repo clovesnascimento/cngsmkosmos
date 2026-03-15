@@ -12,27 +12,11 @@ import json
 import uuid
 import time
 import socket
+import signal
 import logging
 import subprocess
 import tempfile
-
-# ── Windows Compatibility: resource e signal são Unix-only ──────────────────
-import platform as _plat
-_IS_WINDOWS = _plat.system() == "Windows"
-if _IS_WINDOWS:
-    import signal  # signal existe no Windows mas sem SIGKILL
-    if not hasattr(signal, "SIGKILL"):
-        signal.SIGKILL = signal.SIGTERM  # stub para código legado
-
-    class _ResourceStub:
-        RLIMIT_AS = 0; RLIMIT_CPU = 1; RLIMIT_DATA = 2
-        def getrlimit(self, r): return (2**63, 2**63)
-        def setrlimit(self, r, limits): pass
-    resource = _ResourceStub()
-else:
-    import signal
-    import resource
-# ── End Windows Compatibility ────────────────────────────────────────────────
+import resource
 from typing import Dict, Any, Optional
 from dataclasses import dataclass
 
@@ -366,6 +350,18 @@ class MicroVMSandbox:
             logger.error(f"Erro na execução microVM: {e}")
             return {"output": None, "error": str(e), "exit_code": -1}
 
+
+    @staticmethod
+    def _windows_to_docker_path(path: str) -> str:
+        """Converte path Windows (C:\path) para formato Docker Desktop (//c/path)."""
+        import platform
+        if platform.system() != "Windows":
+            return path
+        path = path.replace("\\", "/")
+        if len(path) >= 2 and path[1] == ":":
+            path = "/" + path[0].lower() + path[2:]
+        return path
+
     def _docker_execute(self, code: str, cwd: Optional[str] = None) -> Dict[str, Any]:
         """
         [ATK-01] Fallback seguro usando Docker com isolamento de rede e filesystem.
@@ -384,7 +380,7 @@ class MicroVMSandbox:
             # Monta workspace para que arquivos criados pelo código persistam no host
             workspace_mount = []
             if cwd and os.path.isdir(cwd):
-                workspace_mount = ["-v", f"{cwd}:/workspace:rw", "-w", "/workspace"]
+                workspace_mount = ["-v", f"{self._windows_to_docker_path(cwd)}:/workspace:rw", "-w", "/workspace"]
 
             cmd = [
                 "docker", "run",
@@ -394,7 +390,7 @@ class MicroVMSandbox:
                 "--memory", "512m",              # Limite de RAM [ATK-04]
                 "--cpus", "1.0",                 # Limite de CPU
                 "--security-opt", "no-new-privileges",
-                "-v", f"{tmp_path}:/code.py:ro", # Código como read-only
+                "-v", f"{self._windows_to_docker_path(tmp_path)}:/code.py:ro",
                 *workspace_mount,               # Workspace montado (rw)
                 "python:3.11-slim",
                 "python", "/code.py"

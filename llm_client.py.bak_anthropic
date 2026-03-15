@@ -1,11 +1,9 @@
 """
-KOSMOS Agent — DeepSeek LLM Client v2.4
-========================================
-v2.4: Anthropic SDK + parser robusto write_file
-  - Usa anthropic SDK com ANTHROPIC_BASE_URL=https://api.deepseek.com/anthropic
-  - Fallback para requests (OpenAI-compatible) se SDK não instalada
-  - _parse_json_response suporta tool=write_file com HTML direto
-  - _extract_content suporta ambos os formatos de response
+KOSMOS Agent — DeepSeek LLM Client
+====================================
+Cliente para a API DeepSeek (OpenAI-compatible).
+Usado pelo ProposerAgent e ReviewerAgent para gerar
+pensamentos e código real via LLM.
 """
 
 import os
@@ -17,22 +15,7 @@ from dataclasses import dataclass
 
 logger = logging.getLogger("kosmos.llm")
 
-# ─── Anthropic SDK setup ───────────────────────────────────────────────────
-os.environ.setdefault("ANTHROPIC_BASE_URL", "https://api.deepseek.com/anthropic")
-if not os.environ.get("ANTHROPIC_API_KEY"):
-    _dk = os.environ.get("DEEPSEEK_API_KEY", "")
-    if _dk:
-        os.environ["ANTHROPIC_API_KEY"] = _dk
-
-try:
-    import anthropic as _anthropic_sdk
-    _ANTHROPIC_AVAILABLE = True
-    logger.debug("Anthropic SDK disponivel — usando DeepSeek via Anthropic API")
-except ImportError:
-    _ANTHROPIC_AVAILABLE = False
-    logger.debug("Anthropic SDK nao instalada — usando requests (fallback)")
-
-# ─── Config ───────────────────────────────────────────────────────────────
+# ─── Config ───
 
 DEEPSEEK_API_BASE = "https://api.deepseek.com"
 DEEPSEEK_MODEL = "deepseek-chat"
@@ -41,18 +24,19 @@ DEEPSEEK_CODER_MODEL = "deepseek-coder"
 
 @dataclass
 class LLMConfig:
+    """Configuração do cliente LLM."""
     api_key: str = ""
     api_base: str = os.environ.get("DEEPSEEK_API_BASE", DEEPSEEK_API_BASE)
     model: str = os.environ.get("DEEPSEEK_MODEL", DEEPSEEK_MODEL)
     coder_model: str = os.environ.get("DEEPSEEK_CODER_MODEL", DEEPSEEK_CODER_MODEL)
     temperature: float = 0.7
-    max_tokens: int = 4096
-    timeout: int = 600
+    max_tokens: int = 4096  # Suporta gerações massivas
+    timeout: int = 600      # 10 MINUTOS (Claude-Code Style) para evitar perdas em Landing Pages
     retry_count: int = 3
     retry_delay: float = 5.0
 
 
-# ─── Sistema de prompts ───────────────────────────────────────────────────
+# ─── Sistema de prompts ───
 
 SYSTEM_PROMPT_PROPOSER = """Você é um agente de planejamento cognitivo (KOSMOS-4).
 Sua tarefa é analisar problemas e gerar código Python para resolvê-los.
@@ -125,69 +109,81 @@ SYSTEM_PROMPT_INTENT = """Analise a TAREFA do usuario e classifique-a em uma cat
 
 Responda APENAS com a palavra "CHAT" ou "TECHNICAL"."""
 
-SYSTEM_PROMPT_CHAT = """Você é o CNGSM KOSMOS, um agente cognitivo autônomo.
-Fui criado pela CNGSM (Cognitive Neural & Generative Systems Management), fundada por Cloves Nascimento — Arquiteto de Ecossistemas Cognitivos.
+SYSTEM_PROMPT_CHAT = """Você é o CNGSM CODE, um agente cognitivo amigável e ultra-inteligente. 
 Responda de forma concisa e útil. Se o usuário quiser fazer algo técnico, diga que está pronto para executar."""
 
 
 class DeepSeekClient:
     """
-    Cliente para a API DeepSeek v2.4.
-    Usa Anthropic SDK com ANTHROPIC_BASE_URL=https://api.deepseek.com/anthropic
-    Fallback para requests (OpenAI-compatible) se SDK não disponível.
+    Cliente para a API DeepSeek.
+    Usa requests para fazer chamadas HTTP diretas (OpenAI-compatible API).
+
+    Uso:
+        client = DeepSeekClient(api_key="sk-...")
+        response = client.chat("Olá, como resolver fibonacci?")
+        code = client.generate_code("Calcular fibonacci de 10")
     """
 
     def __init__(self, config: Optional[LLMConfig] = None):
         self.config = config or LLMConfig()
+
+        # API key via config ou env var
         self.api_key = (
             self.config.api_key
             or os.environ.get("DEEPSEEK_API_KEY", "")
         )
+
         if not self.api_key:
-            logger.warning("DeepSeek API key não configurada.")
+            logger.warning(
+                "DeepSeek API key não configurada. "
+                "Set DEEPSEEK_API_KEY ou passe via LLMConfig."
+            )
+
         self._request_count = 0
         self._total_tokens = 0
+
         logger.info(
-            f"DeepSeekClient v2.4 inicializado "
+            f"DeepSeekClient inicializado "
             f"(model={self.config.model}, "
-            f"sdk={'anthropic' if _ANTHROPIC_AVAILABLE else 'requests'})"
+            f"base={self.config.api_base})"
         )
 
     def _extract_json(self, text: str) -> Optional[Dict]:
         """Extrai JSON de uma string, tratando blocos de código e truncamento."""
+        import json
         import re
-
+        
+        # 1. Tenta encontrar bloco de código markdown ```json ... ``` ou ``` ... ```
         match = re.search(r"```(?:json)?\s*(.*?)\s*```", text, re.DOTALL)
         if match:
             text = match.group(1)
-
+        
         text = text.strip()
-        if not text:
-            return None
-
+        if not text: return None
+        
+        # 2. Tenta parse direto do texto limpo
         try:
             return json.loads(text)
         except json.JSONDecodeError:
             pass
-
+            
+        # 3. Se falhou, busca o primeiro { e tenta extrair o objeto
         start = text.find("{")
-        if start == -1:
-            return None
+        if start == -1: return None
         json_part = text[start:].strip()
-
+        
+        # 4. Tenta encontrar o fechamento correto balanceando chaves
         brackets_stack = []
         last_idx = 0
         in_string = False
         escape = False
-
+        
         for i, char in enumerate(json_part):
             if char == '"' and not escape:
                 in_string = not in_string
             if not in_string:
-                if char == '{':
-                    brackets_stack.append('}')
-                elif char == '[':
-                    brackets_stack.append(']')
+                if char == '{': brackets_stack.append('}')
+                elif char == '[': brackets_stack.append(']')
                 elif char in ['}', ']']:
                     if brackets_stack and char == brackets_stack[-1]:
                         brackets_stack.pop()
@@ -195,29 +191,38 @@ class DeepSeekClient:
                             last_idx = i + 1
                             break
             escape = (char == '\\' and not escape)
-
+            
         if last_idx > 0:
+            candidate = json_part[:last_idx]
             try:
-                return json.loads(json_part[:last_idx])
-            except Exception:
+                return json.loads(candidate)
+            except:
                 pass
-
+                
+        # 5. Fallback Final: Extrator Manual por Marcador (para códigos gigantes truncados)
+        # Se falhou tudo, tentamos pegar campos via regex robusta
         result = {}
+        # Busca recursiva para os campos principais
         for key in ["thought", "code", "strategy"]:
+            # Procura a chave e captura tudo até a próxima chave conhecida ou o fim
             pattern = rf'"{key}"\s*:\s*"'
             m = re.search(pattern, json_part)
             if m:
                 v_start = m.end()
+                # Tenta achar o separador de campo JSON: ", "key" :
+                # Ou o fechamento do objeto: " }
                 next_key = re.search(r'",\s*"(thought|code|strategy|result)"\s*:', json_part[v_start:])
                 if next_key:
                     v_end = v_start + next_key.start()
                 else:
                     v_end = json_part.rfind('"')
+                
                 if v_end > v_start:
                     val = json_part[v_start:v_end]
+                    # Desfaz aspas e quebras de linha escapadas
                     val = val.replace('\\"', '"').replace('\\\\', '\\').replace('\\n', '\n')
                     result[key] = val
-
+                    
         return result if "code" in result else None
 
     def _make_request(
@@ -228,181 +233,128 @@ class DeepSeekClient:
         max_tokens: Optional[int] = None,
     ) -> Dict[str, Any]:
         """
-        Faz request à API DeepSeek.
-        Usa Anthropic SDK se disponível, fallback para requests.
-        Retorna sempre {"raw": str} para uniformidade.
+        Faz request à API DeepSeek (OpenAI-compatible).
+        Retorna o response dict parsed.
         """
-        _model = model or self.config.model
-        _temp = temperature or self.config.temperature
-        _max_tokens = max_tokens or self.config.max_tokens
+        import requests
+
+        # Constrói URL: se a base já tem /v1, não acrescenta
+        base = self.config.api_base.rstrip("/")
+        if "/v1" in base:
+            url = f"{base}/chat/completions"
+        else:
+            url = f"{base}/v1/chat/completions"
+
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+        }
+
+        payload = {
+            "model": model or self.config.model,
+            "messages": messages,
+            "temperature": temperature or self.config.temperature,
+            "max_tokens": max_tokens or self.config.max_tokens,
+            "stream": False,
+        }
 
         for attempt in range(self.config.retry_count):
             try:
-                if _ANTHROPIC_AVAILABLE:
-                    # ── Anthropic SDK path ──────────────────────────────
-                    system_msg = next(
-                        (m["content"] for m in messages if m.get("role") == "system"), None
+                logger.info(f"Chamando DeepSeek API ({len(payload['messages'])} mensagens)...")
+                response = requests.post(
+                    url,
+                    headers=headers,
+                    json=payload,
+                    timeout=self.config.timeout,
+                )
+                logger.info(f"Resposta recebida da DeepSeek API (status={response.status_code})")
+
+                self._request_count += 1
+
+                if response.status_code == 200:
+                    data = response.json()
+                    # Track token usage
+                    usage = data.get("usage", {})
+                    self._total_tokens += usage.get("total_tokens", 0)
+
+                    logger.debug(
+                        f"API call #{self._request_count}: "
+                        f"tokens={usage.get('total_tokens', '?')}"
                     )
-                    user_msgs = [m for m in messages if m.get("role") != "system"]
+                    return data
 
-                    if not user_msgs:
-                        return {"raw": ""}
-
-                    logger.info(f"Chamando DeepSeek API ({len(messages)} mensagens)...")
-                    client = _anthropic_sdk.Anthropic()
-                    kwargs = dict(
-                        model="deepseek-chat",
-                        max_tokens=_max_tokens,
-                        messages=user_msgs,
-                        temperature=_temp,
-                    )
-                    if system_msg:
-                        kwargs["system"] = system_msg
-
-                    response = client.messages.create(**kwargs)
-                    logger.info("Resposta recebida da DeepSeek API (status=200)")
-
-                    self._request_count += 1
-                    tokens = response.usage.input_tokens + response.usage.output_tokens
-                    self._total_tokens += tokens
-                    logger.debug(f"API call #{self._request_count}: tokens={tokens}")
-
-                    text = response.content[0].text if response.content else ""
-                    return {"raw": text}
+                elif response.status_code == 429:
+                    # Rate limit — backoff exponencial
+                    wait = self.config.retry_delay * (2 ** attempt)
+                    logger.warning(f"Rate limited. Retry em {wait:.1f}s...")
+                    time.sleep(wait)
+                    continue
 
                 else:
-                    # ── Fallback requests (OpenAI-compatible) ───────────
-                    import requests
-
-                    base = self.config.api_base.rstrip("/")
-                    if "/v1" in base:
-                        url = f"{base}/chat/completions"
-                    else:
-                        url = f"{base}/v1/chat/completions"
-
-                    headers = {
-                        "Authorization": f"Bearer {self.api_key}",
-                        "Content-Type": "application/json",
-                    }
-                    payload = {
-                        "model": _model,
-                        "messages": messages,
-                        "temperature": _temp,
-                        "max_tokens": _max_tokens,
-                        "stream": False,
+                    error_body = response.text[:500]
+                    logger.error(
+                        f"API error {response.status_code}: {error_body}"
+                    )
+                    return {
+                        "error": True,
+                        "status_code": response.status_code,
+                        "message": error_body,
                     }
 
-                    logger.info(f"Chamando DeepSeek API ({len(messages)} mensagens)...")
-                    r = requests.post(url, headers=headers, json=payload, timeout=self.config.timeout)
-                    logger.info(f"Resposta recebida da DeepSeek API (status={r.status_code})")
-
-                    self._request_count += 1
-
-                    if r.status_code == 200:
-                        data = r.json()
-                        usage = data.get("usage", {})
-                        self._total_tokens += usage.get("total_tokens", 0)
-                        logger.debug(f"API call #{self._request_count}: tokens={usage.get('total_tokens', '?')}")
-                        text = data["choices"][0]["message"]["content"]
-                        return {"raw": text}
-
-                    elif r.status_code == 429:
-                        wait = self.config.retry_delay * (2 ** attempt)
-                        logger.warning(f"Rate limited. Retry em {wait:.1f}s...")
-                        time.sleep(wait)
-                        continue
-
-                    else:
-                        logger.error(f"API error {r.status_code}: {r.text[:500]}")
-                        return {"error": True, "status_code": r.status_code, "message": r.text[:500]}
-
-            except Exception as e:
-                logger.warning(f"Tentativa {attempt + 1} falhou: {e}")
+            except requests.exceptions.Timeout:
+                logger.warning(f"Timeout (attempt {attempt + 1})")
                 if attempt < self.config.retry_count - 1:
                     time.sleep(self.config.retry_delay)
                 continue
 
-        return {"error": True, "message": f"Max retries ({self.config.retry_count}) exceeded"}
+            except requests.exceptions.ConnectionError as e:
+                logger.error(f"Connection error: {e}")
+                return {
+                    "error": True,
+                    "message": f"Connection error: {e}",
+                }
+
+            except Exception as e:
+                logger.error(f"Request exception: {e}")
+                return {
+                    "error": True,
+                    "message": str(e),
+                }
+
+        return {
+            "error": True,
+            "message": f"Max retries ({self.config.retry_count}) exceeded",
+        }
 
     def _extract_content(self, response: Dict) -> str:
-        """
-        Extrai o content text do response.
-        Suporta formato Anthropic SDK (raw) e OpenAI-compatible (choices).
-        """
+        """Extrai o content text do response."""
         if response.get("error"):
             return ""
-        # Formato Anthropic SDK / novo formato unificado
-        if "raw" in response:
-            return response["raw"]
-        # Formato OpenAI-compatible (fallback)
+
         try:
             choices = response.get("choices", [])
             if choices:
                 return choices[0]["message"]["content"]
         except (KeyError, IndexError):
             pass
+
         return ""
 
     def _parse_json_response(self, content: str) -> Dict[str, Any]:
         """
-        Parser robusto — suporta:
-          - JSON normal com campo 'code'
-          - JSON com tool=write_file e campo 'content' (HTML direto)
-          - JSON quebrado por HTML com aspas internas
+        Parseia resposta JSON do LLM.
+        Trata casos onde o LLM envolve em ```json ... ```.
         """
-        import re
         content = content.strip()
 
-        # Tenta parse normal
-        parsed = self._extract_json(content)
-        if parsed is not None:
-            # write_file com content HTML
-            if parsed.get("tool") == "write_file" and parsed.get("content"):
-                return parsed
-            # python com code
-            if parsed.get("code"):
-                return parsed
-
-        # JSON quebrado — extrai campos individualmente
-        result = {}
-
-        # Extrai thought
-        m = re.search(r'"thought"\s*:\s*"(.*?)(?="(?:\s*,\s*"(?:tool|code|strategy|path|content)"|$))', content, re.DOTALL)
-        if m:
-            result["thought"] = m.group(1)
-
-        # Detecta write_file
-        if '"tool"' in content and "write_file" in content:
-            result["tool"] = "write_file"
-            pm = re.search(r'"path"\s*:\s*"([^"]+)"', content)
-            if pm:
-                result["path"] = pm.group(1)
-            sm = re.search(r'"strategy"\s*:\s*"([^"]+)"', content)
-            if sm:
-                result["strategy"] = sm.group(1)
-            # Extrai content HTML — tudo após "content": "
-            cm = re.search(r'"content"\s*:\s*"(.*)', content, re.DOTALL)
-            if cm:
-                html = cm.group(1)
-                if html.endswith('"}'):
-                    html = html[:-2]
-                elif html.endswith('"'):
-                    html = html[:-1]
-                result["content"] = html
-                return result
-
-        # Extrai code Python
-        code_m = re.search(r'"code"\s*:\s*"(.*?)(?="(?:\s*[,}]|$))', content, re.DOTALL)
-        if code_m:
-            result["code"] = code_m.group(1).replace("\\n", "\n").replace("\\t", "\t")
-            sm = re.search(r'"strategy"\s*:\s*"([^"]+)"', content)
-            result["strategy"] = sm.group(1) if sm else "llm_generated"
-            return result
+        parsed_json = self._extract_json(content)
+        if parsed_json is not None:
+            return parsed_json
 
         logger.warning(f"Falha ao parsear JSON: {content[:200]}")
         return {"raw": content}
 
-    # ─── API pública ──────────────────────────────────────────────────────
+    # ─── API pública ───
 
     def chat(
         self,
@@ -413,35 +365,56 @@ class DeepSeekClient:
         temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
     ) -> str:
+        """
+        Chat simples com o LLM, suportando historico e parametros.
+        """
         messages = []
         if system_prompt:
             messages.append({"role": "system", "content": system_prompt})
+        
         if history:
             messages.extend(history)
+            
         messages.append({"role": "user", "content": user_message})
-        response = self._make_request(messages, model=model, temperature=temperature, max_tokens=max_tokens)
+
+        response = self._make_request(
+            messages, 
+            model=model, 
+            temperature=temperature, 
+            max_tokens=max_tokens
+        )
         return self._extract_content(response)
 
     def detect_intent(self, task: str) -> str:
+        """Determina se a tarefa e CHAT ou TECHNICAL."""
+        # Heuristica rapida para evitar chamada de rede se for muito obvio
         task_lower = task.lower().strip().strip("?!.")
         greetings = ["oi", "ola", "hello", "bom dia", "boa tarde", "boa noite", "quem e voce", "quem e vc"]
         if task_lower in greetings:
             return "CHAT"
+            
+        # Chamada ao LLM para casos ambiguos
         intent = self.chat(
             user_message=f"Tarefa: {task}",
             system_prompt=SYSTEM_PROMPT_INTENT,
             temperature=0.0,
-            max_tokens=10,
+            max_tokens=10
         )
         return "CHAT" if "CHAT" in intent.upper() else "TECHNICAL"
 
     def generate_proposal(self, task: str, context: Optional[str] = None) -> Dict[str, Any]:
+        """
+        Gera uma proposta de código para resolver a tarefa.
+        Usado pelo ProposerAgent.
+
+        Returns:
+            {"thought": str, "code": str, "strategy": str}
+        """
         user_msg = f"TAREFA: {task}"
         if context:
             user_msg += f"\n\nCONTEXTO ADICIONAL:\n{context}"
 
         logger.info(f"LLM: Gerando proposta para '{task[:50]}...'")
-
         # [KOSMOS-v2.3] SkillRouter integrado
         _skill_protocol = ""
         try:
@@ -449,43 +422,48 @@ class DeepSeekClient:
             from skill_forge import SkillForge
             if not hasattr(self, "_skill_router"):
                 self._skill_router = SkillRouter()
-                self._skill_forge = SkillForge("skills_registry.json")
+                self._skill_forge  = SkillForge("skills_registry.json")
             _skill_protocol = self._skill_router.route(task)
             if not _skill_protocol:
                 forged = self._skill_forge.forge(task)
                 if forged:
                     _skill_protocol = forged.protocol
             if _skill_protocol:
-                logger.info(f"SkillRouter: protocolo injetado para '{task[:40]}...'")
+                import logging as _lg
+                _lg.getLogger("kosmos.llm").info(
+                    f"SkillRouter: protocolo injetado para '{task[:40]}...'"
+                )
         except Exception as _e:
-            logger.warning(f"SkillRouter: falhou ({_e}), usando base prompt")
-
+            import logging as _lg
+            _lg.getLogger("kosmos.llm").warning(
+                f"SkillRouter: falhou ({_e}), usando base prompt"
+            )
         _active_prompt = SYSTEM_PROMPT_PROPOSER + _skill_protocol
-
-        content = self.chat(user_message=user_msg, system_prompt=_active_prompt)
+        content = self.chat(
+            user_message=user_msg,
+            system_prompt=_active_prompt,
+        )
         logger.info("LLM: Proposta gerada com sucesso")
 
         if not content:
             msg = f"[AUTO-DEV] Erro: LLM offline para tarefa: {task}"
-            return {"thought": "LLM não retornou resposta", "code": f"print({repr(msg)})", "strategy": "fallback"}
-
-        parsed = self._parse_json_response(content)
-
-        # Suporta write_file direto
-        if parsed.get("tool") == "write_file" and parsed.get("content"):
             return {
-                "thought": parsed.get("thought", "write_file"),
-                "tool": "write_file",
-                "path": parsed.get("path", "index.html"),
-                "content": parsed.get("content", ""),
-                "strategy": parsed.get("strategy", "write_file"),
-                "code": "",
+                "thought": "LLM não retornou resposta (Timeout ou Erro de Rede)",
+                "code": f"print({repr(msg)})",
+                "strategy": "fallback",
             }
 
+        parsed = self._parse_json_response(content)
+        
         if not parsed or not parsed.get("code"):
             msg = f"[AUTO-DEV] Erro de Parse na resposta do LLM para: {task}"
-            return {"thought": f"Falha ao extrair JSON: {content[:100]}...", "code": f"print({repr(msg)})", "strategy": "fix_json"}
+            return {
+                "thought": f"Falha ao extrair JSON da resposta: {content[:100]}...",
+                "code": f"print({repr(msg)})",
+                "strategy": "fix_json",
+            }
 
+        # Garante campos obrigatórios
         return {
             "thought": parsed.get("thought", "Sem pensamento"),
             "code": parsed.get("code", f"print('Tarefa: {task}')"),
@@ -493,6 +471,13 @@ class DeepSeekClient:
         }
 
     def review_proposal(self, task: str, proposal: Dict) -> Dict[str, Any]:
+        """
+        Revisa uma proposta de código.
+        Usado pelo ReviewerAgent.
+
+        Returns:
+            {"score": float, "feedback": str, "approved": bool}
+        """
         user_msg = (
             f"TAREFA: {task}\n\n"
             f"PROPOSTA:\n"
@@ -500,10 +485,22 @@ class DeepSeekClient:
             f"Strategy: {proposal.get('strategy', '')}\n"
             f"Code:\n```python\n{proposal.get('code', '')}\n```"
         )
-        content = self.chat(user_message=user_msg, system_prompt=SYSTEM_PROMPT_REVIEWER)
+
+        content = self.chat(
+            user_message=user_msg,
+            system_prompt=SYSTEM_PROMPT_REVIEWER,
+        )
+
         if not content:
-            return {"score": 0.5, "feedback": "LLM reviewer offline", "approved": True, "improvements": []}
+            return {
+                "score": 0.5,
+                "feedback": "LLM reviewer offline",
+                "approved": True,
+                "improvements": [],
+            }
+
         parsed = self._parse_json_response(content)
+
         return {
             "score": float(parsed.get("score", 0.5)),
             "feedback": parsed.get("feedback", "Sem feedback"),
@@ -511,7 +508,19 @@ class DeepSeekClient:
             "improvements": parsed.get("improvements", []),
         }
 
-    def reflexion_evaluate(self, task: str, plan: Dict, result: Dict) -> Dict[str, Any]:
+    def reflexion_evaluate(
+        self,
+        task: str,
+        plan: Dict,
+        result: Dict,
+    ) -> Dict[str, Any]:
+        """
+        Avaliação reflexiva do resultado.
+        Usado pelo Reflexion critic.
+
+        Returns:
+            {"success": bool, "analysis": str, "replan": str, "confidence": float}
+        """
         user_msg = (
             f"TAREFA: {task}\n\n"
             f"PLANO EXECUTADO:\n"
@@ -522,10 +531,22 @@ class DeepSeekClient:
             f"Error: {result.get('error', 'Nenhum')}\n"
             f"Exit Code: {result.get('exit_code', -1)}"
         )
-        content = self.chat(user_message=user_msg, system_prompt=SYSTEM_PROMPT_REFLEXION)
+
+        content = self.chat(
+            user_message=user_msg,
+            system_prompt=SYSTEM_PROMPT_REFLEXION,
+        )
+
         if not content:
-            return {"success": result.get("exit_code", -1) == 0, "analysis": "LLM offline", "replan": None, "confidence": 0.3}
+            return {
+                "success": result.get("exit_code", -1) == 0,
+                "analysis": "LLM reflexion offline",
+                "replan": None,
+                "confidence": 0.3,
+            }
+
         parsed = self._parse_json_response(content)
+
         return {
             "success": parsed.get("success", False),
             "analysis": parsed.get("analysis", "Sem análise"),
@@ -534,21 +555,22 @@ class DeepSeekClient:
         }
 
     def get_stats(self) -> Dict[str, Any]:
+        """Retorna estatísticas de uso da API."""
         return {
             "total_requests": self._request_count,
             "total_tokens": self._total_tokens,
             "model": self.config.model,
             "api_base": self.config.api_base,
-            "sdk": "anthropic" if _ANTHROPIC_AVAILABLE else "requests",
         }
 
 
-# ─── Singleton ────────────────────────────────────────────────────────────
+# ─── Singleton para acesso global ───
 
 _global_client: Optional[DeepSeekClient] = None
 
 
 def get_llm_client(config: Optional[LLMConfig] = None) -> DeepSeekClient:
+    """Obtém ou cria o cliente LLM global."""
     global _global_client
     if _global_client is None:
         _global_client = DeepSeekClient(config)
@@ -556,6 +578,7 @@ def get_llm_client(config: Optional[LLMConfig] = None) -> DeepSeekClient:
 
 
 def set_api_key(key: str):
+    """Configura a API key globalmente."""
     global _global_client
     config = LLMConfig(api_key=key)
     _global_client = DeepSeekClient(config)

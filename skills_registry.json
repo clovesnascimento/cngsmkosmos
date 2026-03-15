@@ -1,0 +1,37 @@
+{
+  "CUSTOM_DOMAIN": {
+    "name": "CUSTOM_DOMAIN",
+    "domain": "CUSTOM",
+    "description": "\"Atue como um Engenheiro de Software Sênior e Arquiteto de UX/UI. Sua tarefa é desenvolver a estrutura de código e o design system completo para a landing page da **CNGSM (Cognitive Neural & Generative Systems Management)**, uma empresa de vanguarda em software agentic e redes neurais.\n\n**1. TECH STACK EXIGIDO:**\n- Framework: Next.js (App Router) + React.\n- Estilização: Tailwind CSS + Framer Motion (para animações fluidas simulando sinapses).\n- 3D/Visual: React Three Fiber (para o background do Hero com nós neurais conectivos).\n\n**2. DESIGN SYSTEM & PALETA DE CORES AVANÇADA (NEURO-CYBER AESTHETIC):**\n- **Primary Background:** 'Deep Void Black' (`#050507`) - Transmite profundidade infinita e destaca o neon.\n- **Surface/Cards:** 'Dark Matter Grey' (`#111216`) com bordas translúcidas (Glassmorphism).\n- **Primary Accent (Ação/Energia):** 'Synaptic Cyan' (`#00F0FF`) - Representa processamento rápido e agentes ativos.\n- **Secondary Accent (Cognição/IA):** 'Generative Purple' (`#8A2BE2`) - Representa criatividade artificial e redes neurais profundas.\n- **Typography:** Inter (para legibilidade de UI) e Space Grotesk (para Headings técnicos). Texto primário em 'Ghost White' (`#F8F9FA`).\n\n**3. ARQUITETURA DA PÁGINA (Componentização):**\n- **Header:** Minimalista, navegação baseada em rotas agentivas, botão CTA \"Deploy Agent\" com brilho pulsante em Cyan.\n- **Hero Section:** Título H1 impactante (\"Orquestrando a Inteligência Autônoma\"). Fundo com partículas WebGL reagindo ao mouse (simulando uma rede neural).\n- **Features (Grid):** Cards destacando: 1. Gestão de Sistemas Generativos, 2. Automação Agentic, 3. Arquitetura Neural Escalável. (Use ícones SVG minimalistas).\n- **Interactive Demo/Terminal:** Uma seção simulando um terminal de código onde um \"Agente IA\" digita soluções em tempo real.\n- **Footer:** Links corporativos, documentação de API e status dos servidores.\n\n**4. OUTPUT ESPERADO:**\nForneça:\n1. A estrutura de pastas/componentes sugerida.\n2. O código completo do arquivo `tailwind.config.js` com a paleta de cores mapeada.\n3. O código do componente `HeroSection.tsx` demonstrando a aplicação prática do design e das cores propostas. Escreva código limpo, modular e pronto para produção.\" [Refinar código: O módulo está ausente. Verifique o import ou use uma biblioteca alternativa.]",
+    "keywords": [
+      "\"atue",
+      "engenheiro",
+      "software",
+      "sênior",
+      "arquiteto",
+      "ux/ui.",
+      "tarefa",
+      "desenvolver",
+      "estrutura",
+      "código"
+    ],
+    "excludes": [],
+    "priority": 9,
+    "protocol": "\n\n[SKILL FORJADO: CUSTOM_DOMAIN]\nDomínio: \"Atue como um Engenheiro de Software Sênior e Arquiteto de UX/UI. Sua tarefa é desenvolver a estrutura de código e o design system completo para a landing page da **CNGSM (Cognitive Neural & Generative Systems Management)**, uma empresa de vanguarda em software agentic e redes neurais.\n\n**1. TECH STACK EXIGIDO:**\n- Framework: Next.js (App Router) + React.\n- Estilização: Tailwind CSS + Framer Motion (para animações fluidas simulando sinapses).\n- 3D/Visual: React Three Fiber (para o background do Hero com nós neurais conectivos).\n\n**2. DESIGN SYSTEM & PALETA DE CORES AVANÇADA (NEURO-CYBER AESTHETIC):**\n- **Primary Background:** 'Deep Void Black' (`#050507`) - Transmite profundidade infinita e destaca o neon.\n- **Surface/Cards:** 'Dark Matter Grey' (`#111216`) com bordas translúcidas (Glassmorphism).\n- **Primary Accent (Ação/Energia):** 'Synaptic Cyan' (`#00F0FF`) - Representa processamento rápido e agentes ativos.\n- **Secondary Accent (Cognição/IA):** 'Generative Purple' (`#8A2BE2`) - Representa criatividade artificial e redes neurais profundas.\n- **Typography:** Inter (para legibilidade de UI) e Space Grotesk (para Headings técnicos). Texto primário em 'Ghost White' (`#F8F9FA`).\n\n**3. ARQUITETURA DA PÁGINA (Componentização):**\n- **Header:** Minimalista, navegação baseada em rotas agentivas, botão CTA \"Deploy Agent\" com brilho pulsante em Cyan.\n- **Hero Section:** Título H1 impactante (\"Orquestrando a Inteligência Autônoma\"). Fundo com partículas WebGL reagindo ao mouse (simulando uma rede neural).\n- **Features (Grid):** Cards destacando: 1. Gestão de Sistemas Generativos, 2. Automação Agentic, 3. Arquitetura Neural Escalável. (Use ícones SVG minimalistas).\n- **Interactive Demo/Terminal:** Uma seção simulando um terminal de código onde um \"Agente IA\" digita soluções em tempo real.\n- **Footer:** Links corporativos, documentação de API e status dos servidores.\n\n**4. OUTPUT ESPERADO:**\nForneça:\n1. A estrutura de pastas/componentes sugerida.\n2. O código completo do arquivo `tailwind.config.js` com a paleta de cores mapeada.\n3. O código do componente `HeroSection.tsx` demonstrando a aplicação prática do design e das cores propostas. Escreva código limpo, modular e pronto para produção.\" [Refinar código: O módulo está ausente. Verifique o import ou use uma biblioteca alternativa.]\n\nAplicando os 6 Pilares Cognitivos Universais:\n\nFASE 1 — [ANÁLISE MULTIDIMENSIONAL]:\n\n  PILAR 1 — Primeiros Princípios:\n    Qual é o problema fundamental, despido de pressupostos?\n    Proibido usar analogias sem antes reconstruir do zero.\n\n  PILAR 2 — Estrutura do Output:\n    Como o resultado deve ser organizado para consumo máximo?\n    Modular, escaneável, com hierarquia de importância clara.\n\n  PILAR 3 — Ancoragem em Leis Fundamentais:\n    Quais as restrições invioláveis deste domínio?\n    Nenhuma proposta viola essas restrições sem justificativa explícita.\n\n  PILAR 4 — Advogado do Diabo:\n    Qual o argumento mais forte contra a abordagem escolhida?\n    Nomear e responder antes de prosseguir.\n\n  PILAR 5 — Cruzamento Estocástico:\n    Qual domínio DISTANTE pode iluminar este problema?\n    Forçar pelo menos 1 conexão interdisciplinar não óbvia.\n\n  PILAR 6 — Dark Knowledge:\n    O que é implícito mas não dito no contexto deste problema?\n    Articular o não-dito antes de responder o dito.\n\nFASE 2 — [EXECUÇÃO]:\n  Resposta que integra os 6 pilares.\n  Anti-banalidade: evitar o consenso seguro em qualquer forma.\n  Compromisso: uma frase que resume a tese central.\n",
+    "origin": "forged",
+    "source_skill": "PILLARS",
+    "pillars_used": [
+      "Cientista Cognitivo",
+      "IHC/UX",
+      "Engenheiro de Cognição",
+      "Psicólogo Cognitivo",
+      "Neurocientista Comput.",
+      "Pesquisador IA"
+    ],
+    "signature_blend": {
+      "divergencia_criativa": 0.33,
+      "rigor_formal": 0.33,
+      "estrutura_metodologica": 0.34
+    }
+  }
+}
